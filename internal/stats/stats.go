@@ -3,6 +3,7 @@
 package stats
 
 import (
+	"slices"
 	"time"
 
 	"gotodo/internal/task"
@@ -134,4 +135,113 @@ func HeatmapGrid(tasks []task.Task, weeks int, now time.Time) [][]int {
 // weekdayIndex maps Monday..Sunday to 0..6 (Go's Weekday puts Sunday at 0).
 func weekdayIndex(t time.Time) int {
 	return (int(t.Weekday()) + 6) % 7
+}
+
+// TimeInStatus reconstructs how long a task has spent in each column by
+// replaying its transition history. Done tasks stop accruing time.
+func TimeInStatus(t task.Task, now time.Time) map[task.Status]time.Duration {
+	out := map[task.Status]time.Duration{}
+	cur := task.StatusTodo
+	if len(t.History) > 0 {
+		cur = t.History[0].From
+	} else {
+		cur = t.Status
+	}
+	start := t.CreatedAt
+	for _, tr := range t.History {
+		out[cur] += tr.At.Sub(start)
+		cur, start = tr.To, tr.At
+	}
+	if cur != task.StatusDone {
+		out[cur] += now.Sub(start)
+	}
+	return out
+}
+
+// CycleStats summarises how long completed tasks took end to end.
+type CycleStats struct {
+	Mean      time.Duration
+	Median    time.Duration
+	N         int
+	PerColumn map[task.Status]time.Duration // mean time per column, completed tasks only
+}
+
+// CycleTimes measures created-to-done duration over completed tasks only.
+func CycleTimes(tasks []task.Task, now time.Time) CycleStats {
+	out := CycleStats{PerColumn: map[task.Status]time.Duration{}}
+	var durations []time.Duration
+	totals := map[task.Status]time.Duration{}
+
+	for _, t := range tasks {
+		at, ok := task.CompletedAt(t)
+		if !ok {
+			continue
+		}
+		durations = append(durations, at.Sub(t.CreatedAt))
+		for s, d := range TimeInStatus(t, now) {
+			totals[s] += d
+		}
+	}
+	out.N = len(durations)
+	if out.N == 0 {
+		return out
+	}
+
+	var sum time.Duration
+	for _, d := range durations {
+		sum += d
+	}
+	out.Mean = sum / time.Duration(out.N)
+	out.Median = median(durations)
+	for s, total := range totals {
+		out.PerColumn[s] = total / time.Duration(out.N)
+	}
+	return out
+}
+
+func median(d []time.Duration) time.Duration {
+	s := slices.Clone(d)
+	slices.Sort(s)
+	n := len(s)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[n/2-1] + s[n/2]) / 2
+}
+
+// BlockedItem is one currently-blocked task and how long it has been stuck.
+type BlockedItem struct {
+	Title string
+	For   time.Duration
+}
+
+// BlockedReport lists currently-blocked tasks, longest-blocked first.
+func BlockedReport(tasks []task.Task, now time.Time) []BlockedItem {
+	var out []BlockedItem
+	for _, t := range tasks {
+		if t.Status != task.StatusBlocked {
+			continue
+		}
+		since := t.CreatedAt
+		for i := len(t.History) - 1; i >= 0; i-- {
+			if t.History[i].To == task.StatusBlocked {
+				since = t.History[i].At
+				break
+			}
+		}
+		out = append(out, BlockedItem{Title: t.Title, For: now.Sub(since)})
+	}
+	slices.SortStableFunc(out, func(a, b BlockedItem) int {
+		switch {
+		case a.For > b.For:
+			return -1
+		case a.For < b.For:
+			return 1
+		}
+		return 0
+	})
+	return out
 }

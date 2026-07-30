@@ -123,3 +123,98 @@ func TestHeatmapGridShapeAndPlacement(t *testing.T) {
 		t.Errorf("grid[3][3] = %d, want 1 (Thursday of the last week)", grid[3][3])
 	}
 }
+
+func TestTimeInStatusWalksHistory(t *testing.T) {
+	created := ref.Add(-10 * time.Hour)
+	tk := task.Task{
+		Status:    task.StatusDoing,
+		CreatedAt: created,
+		History: []task.Transition{
+			{From: task.StatusTodo, To: task.StatusDoing, At: created.Add(2 * time.Hour)},
+			{From: task.StatusDoing, To: task.StatusBlocked, At: created.Add(3 * time.Hour)},
+			{From: task.StatusBlocked, To: task.StatusDoing, At: created.Add(7 * time.Hour)},
+		},
+	}
+	got := TimeInStatus(tk, ref)
+	want := map[task.Status]time.Duration{
+		task.StatusTodo:    2 * time.Hour,
+		task.StatusDoing:   1*time.Hour + 3*time.Hour, // 1h before block, 3h after, still open
+		task.StatusBlocked: 4 * time.Hour,
+	}
+	for s, w := range want {
+		if got[s] != w {
+			t.Errorf("TimeInStatus[%q] = %v, want %v", s, got[s], w)
+		}
+	}
+}
+
+func TestTimeInStatusStopsAccruingWhenDone(t *testing.T) {
+	created := ref.Add(-10 * time.Hour)
+	tk := task.Task{
+		Status:    task.StatusDone,
+		CreatedAt: created,
+		History:   []task.Transition{{From: task.StatusTodo, To: task.StatusDone, At: created.Add(4 * time.Hour)}},
+	}
+	got := TimeInStatus(tk, ref)
+	if got[task.StatusTodo] != 4*time.Hour {
+		t.Errorf("todo = %v, want 4h", got[task.StatusTodo])
+	}
+	if got[task.StatusDone] != 0 {
+		t.Errorf("done = %v, want 0 (done tasks stop accruing)", got[task.StatusDone])
+	}
+}
+
+func TestCycleTimesMeanAndMedian(t *testing.T) {
+	tasks := []task.Task{
+		done("a", ref.Add(-2*time.Hour), ref),
+		done("b", ref.Add(-4*time.Hour), ref),
+		done("c", ref.Add(-9*time.Hour), ref),
+		{Status: task.StatusDoing, CreatedAt: ref.Add(-100 * time.Hour)}, // ignored
+	}
+	got := CycleTimes(tasks, ref)
+	if got.N != 3 {
+		t.Fatalf("N = %d, want 3", got.N)
+	}
+	if got.Mean != 5*time.Hour {
+		t.Errorf("Mean = %v, want 5h", got.Mean)
+	}
+	if got.Median != 4*time.Hour {
+		t.Errorf("Median = %v, want 4h", got.Median)
+	}
+}
+
+func TestCycleTimesEmpty(t *testing.T) {
+	got := CycleTimes(nil, ref)
+	if got.N != 0 || got.Mean != 0 || got.Median != 0 {
+		t.Errorf("CycleTimes(nil) = %+v, want zeroes", got)
+	}
+	if got.PerColumn == nil {
+		t.Error("PerColumn is nil, want an empty non-nil map")
+	}
+}
+
+func TestBlockedReportSortedLongestFirst(t *testing.T) {
+	mk := func(title string, blockedAt time.Time) task.Task {
+		return task.Task{
+			Title:     title,
+			Status:    task.StatusBlocked,
+			CreatedAt: blockedAt.Add(-time.Hour),
+			History:   []task.Transition{{From: task.StatusDoing, To: task.StatusBlocked, At: blockedAt}},
+		}
+	}
+	tasks := []task.Task{
+		mk("[Short]", ref.Add(-1*time.Hour)),
+		mk("[Long]", ref.Add(-9*time.Hour)),
+		{Title: "[Not blocked]", Status: task.StatusDoing, CreatedAt: ref.Add(-99 * time.Hour)},
+	}
+	got := BlockedReport(tasks, ref)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Title != "[Long]" || got[0].For != 9*time.Hour {
+		t.Errorf("got[0] = %+v, want {[Long] 9h}", got[0])
+	}
+	if got[1].Title != "[Short]" || got[1].For != 1*time.Hour {
+		t.Errorf("got[1] = %+v, want {[Short] 1h}", got[1])
+	}
+}
