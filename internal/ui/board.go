@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"gotodo/internal/task"
@@ -188,4 +189,86 @@ func truncate(s string, n int) string {
 		return "…"
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// Update dispatches on the current mode. The non-Normal branches are stubs
+// until the next task fills them in.
+func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch m.mode {
+	case modeInput, modeMove, modeConfirm:
+		return m, nil // filled in by the CRUD task
+	}
+	return m.updateNormal(keyMsg)
+}
+
+// updateNormal handles navigation and focus in the default mode.
+func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
+	m.err = ""
+
+	if keyMsg.Type == tea.KeyCtrlT {
+		if m.focus == focusItem {
+			m.focus = focusColumn
+		} else {
+			m.focus = focusItem
+		}
+		return m, nil
+	}
+
+	switch keyMsg.String() {
+	case "h", "left":
+		m.moveColumn(-1)
+	case "l", "right":
+		m.moveColumn(1)
+	case "j", "down":
+		if m.focus == focusItem {
+			m.moveItem(1)
+		}
+	case "k", "up":
+		if m.focus == focusItem {
+			m.moveItem(-1)
+		}
+	case "g":
+		if m.focus == focusItem {
+			m.sel[m.col] = 0
+		}
+	case "G":
+		if m.focus == focusItem {
+			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
+		}
+	}
+	m.clampSelection()
+	return m, nil
+}
+
+// moveColumn shifts the focused column, clamped at both edges.
+func (m *BoardModel) moveColumn(delta int) {
+	next := m.col + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(task.Statuses) {
+		next = len(task.Statuses) - 1
+	}
+	m.col = next
+}
+
+// moveItem shifts the cursor within the focused column, clamped at both ends.
+func (m *BoardModel) moveItem(delta int) {
+	n := len(m.board.ByStatus(m.currentStatus()))
+	if n == 0 {
+		m.sel[m.col] = 0
+		return
+	}
+	next := m.sel[m.col] + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= n {
+		next = n - 1
+	}
+	m.sel[m.col] = next
 }

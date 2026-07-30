@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"gotodo/internal/task"
 )
 
@@ -93,5 +95,120 @@ func TestClampSelectionAfterShrink(t *testing.T) {
 	m.clampSelection()
 	if m.sel[0] != 0 {
 		t.Errorf("sel[0] = %d, want 0 (clamped to the single task)", m.sel[0])
+	}
+}
+
+func key(s string) tea.KeyMsg {
+	if len(s) == 1 {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+	switch s {
+	case "ctrl+t":
+		return tea.KeyMsg{Type: tea.KeyCtrlT}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	}
+	panic("unhandled key in test helper: " + s)
+}
+
+// press feeds a sequence of keys through Update.
+func press(m BoardModel, keys ...string) BoardModel {
+	for _, k := range keys {
+		m, _ = m.Update(key(k))
+	}
+	return m
+}
+
+func TestCtrlTTogglesFocus(t *testing.T) {
+	m := press(NewBoardModel(seeded(t)), "ctrl+t")
+	if m.focus != focusColumn {
+		t.Fatalf("focus = %v, want focusColumn", m.focus)
+	}
+	m = press(m, "ctrl+t")
+	if m.focus != focusItem {
+		t.Errorf("focus = %v, want focusItem", m.focus)
+	}
+}
+
+func TestHLMoveBetweenColumns(t *testing.T) {
+	m := press(NewBoardModel(seeded(t)), "l", "l")
+	if m.col != 2 {
+		t.Errorf("col = %d, want 2", m.col)
+	}
+	m = press(m, "h")
+	if m.col != 1 {
+		t.Errorf("col = %d, want 1", m.col)
+	}
+}
+
+func TestColumnNavigationClampsAtEdges(t *testing.T) {
+	m := press(NewBoardModel(seeded(t)), "h", "h")
+	if m.col != 0 {
+		t.Errorf("col = %d, want 0 (clamped at the left edge)", m.col)
+	}
+	m = press(m, "l", "l", "l", "l", "l")
+	if m.col != len(task.Statuses)-1 {
+		t.Errorf("col = %d, want %d (clamped at the right edge)", m.col, len(task.Statuses)-1)
+	}
+}
+
+func TestJKMoveBetweenItemsInItemFocus(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[One]", ref)
+	b.Add("[Two]", ref)
+	b.Add("[Three]", ref)
+	m := press(NewBoardModel(b), "j", "j")
+	if m.sel[0] != 2 {
+		t.Errorf("sel[0] = %d, want 2", m.sel[0])
+	}
+	m = press(m, "j") // clamp at the bottom
+	if m.sel[0] != 2 {
+		t.Errorf("sel[0] = %d, want 2 (clamped at the last item)", m.sel[0])
+	}
+	m = press(m, "k", "k", "k")
+	if m.sel[0] != 0 {
+		t.Errorf("sel[0] = %d, want 0 (clamped at the first item)", m.sel[0])
+	}
+}
+
+func TestJKDoNotMoveItemsInColumnFocus(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[One]", ref)
+	b.Add("[Two]", ref)
+	m := press(NewBoardModel(b), "ctrl+t", "j")
+	if m.sel[0] != 0 {
+		t.Errorf("sel[0] = %d, want 0 (column focus must not move the item cursor)", m.sel[0])
+	}
+}
+
+func TestGAndShiftGJumpToEnds(t *testing.T) {
+	b := &task.Board{}
+	for i := 0; i < 4; i++ {
+		b.Add("[Task title]", ref)
+	}
+	m := press(NewBoardModel(b), "G")
+	if m.sel[0] != 3 {
+		t.Errorf("sel[0] after G = %d, want 3", m.sel[0])
+	}
+	m = press(m, "g")
+	if m.sel[0] != 0 {
+		t.Errorf("sel[0] after g = %d, want 0", m.sel[0])
+	}
+}
+
+func TestArrowKeysMirrorHJKL(t *testing.T) {
+	m := press(NewBoardModel(seeded(t)), "right", "right")
+	if m.col != 2 {
+		t.Errorf("col = %d, want 2", m.col)
 	}
 }
