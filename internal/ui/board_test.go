@@ -377,3 +377,43 @@ func TestMoveKeysIgnoredOnEmptyColumn(t *testing.T) {
 		t.Errorf("mode = %v, want modeNormal (nothing to delete)", m.mode)
 	}
 }
+
+func TestGrabTracksTaskByIDNotLastSlot(t *testing.T) {
+	b := &task.Board{}
+	t1 := b.Add("[T1]", ref).ID
+	b.Add("[T2]", ref)
+	b.Add("[T3]", ref)
+	// Move T2 to doing first, so doing's insertion order is [T2].
+	if err := b.Move(b.Tasks[1].ID, task.StatusDoing, ref); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	// Grab T1 (still in todo, at sel[0] = 0).
+	m = press(m, "m")
+	if m.grabID != t1 {
+		t.Fatalf("grabID = %q, want %q (T1)", m.grabID, t1)
+	}
+	m = press(m, "l") // todo -> doing; doing now holds [T2, T1] in insertion order
+	got, ok := m.selectedTask()
+	if !ok {
+		t.Fatal("selectedTask returned ok=false after shift")
+	}
+	if got.ID != m.grabID {
+		t.Errorf("selectedTask = %q, want the grabbed task %q", got.ID, m.grabID)
+	}
+}
+
+func TestGrabShiftEmitsDirtyCmd(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "m")
+	m, cmd := m.Update(key("l"))
+	if cmd == nil {
+		t.Fatal("shift returned a nil cmd, want a dirtyMsg cmd")
+	}
+	if _, ok := cmd().(dirtyMsg); !ok {
+		t.Errorf("cmd produced %T, want dirtyMsg", cmd())
+	}
+	_ = m
+}

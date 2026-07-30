@@ -197,8 +197,9 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-// Update dispatches on the current mode. The non-Normal branches are stubs
-// until the next task fills them in.
+// Update dispatches on the current mode: modeInput handles add/edit text
+// entry, modeMove handles grab-to-move, modeConfirm handles the delete
+// prompt, and everything else falls through to normal navigation.
 func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -327,8 +328,10 @@ func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	switch k.String() {
 	case "h", "left":
 		m.shiftGrabbed(-1)
+		return m, dirty()
 	case "l", "right":
 		m.shiftGrabbed(1)
+		return m, dirty()
 	case "enter":
 		m.mode = modeNormal
 		m.grabID = ""
@@ -358,7 +361,13 @@ func (m *BoardModel) shiftGrabbed(delta int) {
 		return
 	}
 	m.col = next
-	m.sel[m.col] = len(m.board.ByStatus(task.Statuses[next])) - 1
+	items := m.board.ByStatus(task.Statuses[next])
+	for i, t := range items {
+		if t.ID == m.grabID {
+			m.sel[next] = i
+			break
+		}
+	}
 	m.clampSelection()
 }
 
