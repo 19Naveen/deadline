@@ -76,10 +76,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmds []tea.Cmd
 			var next tea.Model = m
 			for _, r := range msg.Runes {
+				helpWasOpen := next.(AppModel).showHelp
 				var cmd tea.Cmd
 				next, cmd = next.(AppModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt})
 				if cmd != nil {
 					cmds = append(cmds, cmd)
+				}
+				if helpWasOpen {
+					break // the overlay swallowed this batch
 				}
 			}
 			return next, tea.Batch(cmds...)

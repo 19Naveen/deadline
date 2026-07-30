@@ -166,6 +166,30 @@ func TestCoalescedMultiRuneMovesSelectionDownTwo(t *testing.T) {
 	}
 }
 
+func TestHelpOpenSwallowsWholeCoalescedBatch(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[One]", ref)
+	b.Add("[Two]", ref)
+	b.Add("[Three]", ref)
+	a := NewApp(b)
+	a.board = fixedClock(a.board)
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	a = m.(AppModel)
+	if !a.showHelp {
+		t.Fatal("showHelp = false, want true")
+	}
+
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj")})
+	a = m.(AppModel)
+	if a.showHelp {
+		t.Error("showHelp = true, want false after coalesced \"jj\" closed the overlay")
+	}
+	if a.board.sel[0] != 0 {
+		t.Errorf("sel[0] = %d, want 0 (second rune must not reach the board)", a.board.sel[0])
+	}
+}
+
 func TestDirtyMsgTriggersSave(t *testing.T) {
 	b := &task.Board{}
 	dir := t.TempDir()
