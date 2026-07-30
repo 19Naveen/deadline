@@ -79,11 +79,17 @@ func HeaderStyle(s task.Status) lipgloss.Style {
 // FormatDate renders Singapore-style DD/MM/YYYY.
 func FormatDate(t time.Time) string { return t.Format("02/01/2006") }
 
+// minDuration negates to itself (int64 overflow), so it needs nudging.
+const minDuration = time.Duration(-1 << 63)
+
 // FormatDuration renders a compact human duration: "3h", "1d 6h", "12m".
 // Negative durations (a sign the underlying timestamp data is wrong) are
 // formatted by magnitude and prefixed with "-" rather than hidden.
 func FormatDuration(d time.Duration) string {
 	if d < 0 {
+		if d == minDuration {
+			d = minDuration + 1
+		}
 		return "-" + FormatDuration(-d)
 	}
 	if d < time.Hour {

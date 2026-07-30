@@ -78,6 +78,7 @@ func TestFormatDuration(t *testing.T) {
 		0:                 "0m",
 		-90 * time.Minute: "-1h",
 		-30 * time.Hour:   "-1d 6h",
+		minDuration:       "-106751d 23h",
 	}
 	for d, want := range cases {
 		if got := FormatDuration(d); got != want {
