@@ -80,7 +80,12 @@ func HeaderStyle(s task.Status) lipgloss.Style {
 func FormatDate(t time.Time) string { return t.Format("02/01/2006") }
 
 // FormatDuration renders a compact human duration: "3h", "1d 6h", "12m".
+// Negative durations (a sign the underlying timestamp data is wrong) are
+// formatted by magnitude and prefixed with "-" rather than hidden.
 func FormatDuration(d time.Duration) string {
+	if d < 0 {
+		return "-" + FormatDuration(-d)
+	}
 	if d < time.Hour {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}

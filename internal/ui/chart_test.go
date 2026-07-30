@@ -71,11 +71,13 @@ func TestFormatDateIsSingaporeFormat(t *testing.T) {
 
 func TestFormatDuration(t *testing.T) {
 	cases := map[time.Duration]string{
-		45 * time.Second: "0m",
-		90 * time.Second: "1m",
-		3 * time.Hour:    "3h",
-		30 * time.Hour:   "1d 6h",
-		0:                "0m",
+		45 * time.Second:  "0m",
+		90 * time.Second:  "1m",
+		3 * time.Hour:     "3h",
+		30 * time.Hour:    "1d 6h",
+		0:                 "0m",
+		-90 * time.Minute: "-1h",
+		-30 * time.Hour:   "-1d 6h",
 	}
 	for d, want := range cases {
 		if got := FormatDuration(d); got != want {
