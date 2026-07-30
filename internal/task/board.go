@@ -13,6 +13,8 @@ var ErrNotFound = errors.New("task not found")
 // rather than stored separately, so a move is a single field write.
 type Board struct {
 	Tasks []Task `json:"tasks"`
+
+	path string // where Save writes; unexported so it stays out of the JSON
 }
 
 // Add appends a new todo task and returns a pointer into b.Tasks.
