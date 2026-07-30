@@ -69,6 +69,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if !typing {
+			if m.showHelp {
+				m.showHelp = false // any key closes the overlay, and does nothing else
+				return m, nil
+			}
 			switch msg.String() {
 			case "tab":
 				if m.page == pageBoard {
@@ -82,10 +86,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "q":
 				return m, tea.Quit
-			}
-			if m.showHelp {
-				m.showHelp = false // any other key dismisses the overlay
-				return m, nil
 			}
 		}
 		if m.page == pageBoard {

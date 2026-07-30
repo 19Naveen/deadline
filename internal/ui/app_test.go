@@ -91,6 +91,47 @@ func TestTabIgnoredWhileAddingATask(t *testing.T) {
 	}
 }
 
+func TestHelpOpenTabDismissesOnly(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	a = m.(AppModel)
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	a = m.(AppModel)
+	if a.showHelp {
+		t.Error("showHelp = true, want false after tab while help open")
+	}
+	if a.page != pageBoard {
+		t.Errorf("page = %v, want pageBoard unchanged", a.page)
+	}
+}
+
+func TestHelpOpenQDismissesOnly(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	a = m.(AppModel)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	a = m.(AppModel)
+	if a.showHelp {
+		t.Error("showHelp = true, want false after q while help open")
+	}
+	if cmd != nil {
+		t.Error("q while help open returned a non-nil cmd, want nil (must not quit)")
+	}
+}
+
+func TestHelpOpenCtrlCStillQuits(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	a = m.(AppModel)
+	_, cmd := a.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c while help open returned a nil cmd, want tea.Quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c while help open produced %T, want tea.QuitMsg", cmd())
+	}
+}
+
 func TestDirtyMsgTriggersSave(t *testing.T) {
 	b := &task.Board{}
 	dir := t.TempDir()
