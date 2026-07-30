@@ -62,9 +62,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// While the board is capturing text, only ctrl+c is global —
-		// everything else, including q and tab, belongs to the input.
-		typing := m.page == pageBoard && m.board.mode == modeInput
+		// Every non-normal board mode is modal with respect to the global
+		// keys: modeInput is text entry, modeConfirm and modeMove each
+		// advertise their own q/tab-shaped footer (e.g. "y / n",
+		// "enter drop · esc cancel") that would otherwise be preempted.
+		// Only ctrl+c is global regardless of mode.
+		typing := m.page == pageBoard && m.board.mode != modeNormal
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}

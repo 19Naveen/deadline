@@ -89,6 +89,26 @@ func TestSaveLeavesNoTempFile(t *testing.T) {
 	}
 }
 
+func TestLoadCoercesUnknownStatusToTodo(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tasks.json")
+	body := `{"tasks":[{"id":"abc123","title":"[Ghost task]","status":"archived",` +
+		`"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}]}`
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile returned %v", err)
+	}
+
+	b, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load returned %v, want nil", err)
+	}
+	if len(b.Tasks) != 1 {
+		t.Fatalf("len(Tasks) = %d, want 1", len(b.Tasks))
+	}
+	if b.Tasks[0].Status != StatusTodo {
+		t.Errorf("Status = %q, want %q", b.Tasks[0].Status, StatusTodo)
+	}
+}
+
 func TestLoadCorruptFileErrors(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "tasks.json")
 	if err := os.WriteFile(p, []byte("{not json"), 0o600); err != nil {

@@ -190,6 +190,54 @@ func TestHelpOpenSwallowsWholeCoalescedBatch(t *testing.T) {
 	}
 }
 
+func TestQDoesNotQuitDuringDeleteConfirm(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	a = m.(AppModel)
+	if a.board.mode != modeConfirm {
+		t.Fatalf("mode = %v, want modeConfirm", a.board.mode)
+	}
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("q quit the app during delete-confirm, want it consumed by the prompt")
+		}
+	}
+	a = m.(AppModel)
+	if a.page != pageBoard {
+		t.Errorf("page = %v, want pageBoard (q must not leave the board)", a.page)
+	}
+}
+
+func TestTabDoesNotSwitchPagesDuringMove(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a = m.(AppModel)
+	if a.board.mode != modeMove {
+		t.Fatalf("mode = %v, want modeMove", a.board.mode)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.(AppModel).page != pageBoard {
+		t.Error("tab switched pages during modeMove, want it ignored")
+	}
+}
+
+func TestCtrlCStillQuitsDuringDeleteConfirm(t *testing.T) {
+	a := app(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	a = m.(AppModel)
+	if a.board.mode != modeConfirm {
+		t.Fatalf("mode = %v, want modeConfirm", a.board.mode)
+	}
+	_, cmd := a.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c during delete-confirm returned a nil cmd, want tea.Quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("ctrl+c during delete-confirm produced %T, want tea.QuitMsg", cmd())
+	}
+}
+
 func TestDirtyMsgTriggersSave(t *testing.T) {
 	b := &task.Board{}
 	dir := t.TempDir()

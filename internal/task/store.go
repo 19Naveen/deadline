@@ -36,8 +36,24 @@ func Load(path string) (*Board, error) {
 	if err := json.Unmarshal(data, b); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	b.path = path
+	// A hand-edited or future-version file may carry a status this build
+	// doesn't recognise. Coerce it to todo instead of dropping the task or
+	// erroring, so it stays reachable and the user can see and fix it.
+	for i := range b.Tasks {
+		if !isKnownStatus(b.Tasks[i].Status) {
+			b.Tasks[i].Status = StatusTodo
+		}
+	}
 	return b, nil
+}
+
+func isKnownStatus(s Status) bool {
+	for _, known := range Statuses {
+		if s == known {
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes the board atomically: temp file first, then rename. Each
