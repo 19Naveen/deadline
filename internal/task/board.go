@@ -14,12 +14,17 @@ var ErrNotFound = errors.New("task not found")
 type Board struct {
 	Tasks []Task `json:"tasks"`
 
-	path string // where Save writes; unexported so it stays out of the JSON
+	path  string // where Save writes; unexported so it stays out of the JSON
+	dirty bool   // true when there are unsaved mutations; unexported, not serialised
 }
+
+// Dirty reports whether the board has mutations not yet written by Save.
+func (b *Board) Dirty() bool { return b.dirty }
 
 // Add appends a new todo task and returns a pointer into b.Tasks.
 func (b *Board) Add(title string, now time.Time) *Task {
 	b.Tasks = append(b.Tasks, NewTask(strings.TrimSpace(title), now))
+	b.dirty = true
 	return &b.Tasks[len(b.Tasks)-1]
 }
 
@@ -45,6 +50,7 @@ func (b *Board) Move(id string, to Status, now time.Time) error {
 	t.History = append(t.History, Transition{From: t.Status, To: to, At: now})
 	t.Status = to
 	t.UpdatedAt = now
+	b.dirty = true
 	return nil
 }
 
@@ -61,6 +67,7 @@ func (b *Board) Edit(id, title string, now time.Time) error {
 	}
 	t.Title = title
 	t.UpdatedAt = now
+	b.dirty = true
 	return nil
 }
 
@@ -69,6 +76,7 @@ func (b *Board) Delete(id string) error {
 	for i := range b.Tasks {
 		if b.Tasks[i].ID == id {
 			b.Tasks = append(b.Tasks[:i], b.Tasks[i+1:]...)
+			b.dirty = true
 			return nil
 		}
 	}

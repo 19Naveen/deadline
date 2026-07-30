@@ -94,6 +94,61 @@ func TestBoardDelete(t *testing.T) {
 	}
 }
 
+func TestBoardAddSetsDirty(t *testing.T) {
+	var b Board
+	if b.Dirty() {
+		t.Fatal("Dirty() = true before any mutation, want false")
+	}
+	b.Add("[Task title]", ref)
+	if !b.Dirty() {
+		t.Error("Dirty() = false after Add, want true")
+	}
+}
+
+func TestBoardMoveToSameStatusDoesNotSetDirty(t *testing.T) {
+	var b Board
+	id := b.Add("[Task title]", ref).ID
+	b.dirty = false // Add already set it; reset to isolate Move's effect
+	if err := b.Move(id, StatusTodo, ref.Add(time.Hour)); err != nil {
+		t.Fatalf("Move returned %v, want nil", err)
+	}
+	if b.Dirty() {
+		t.Error("Dirty() = true after a same-status Move, want false")
+	}
+}
+
+func TestBoardEditBlankTitleDoesNotSetDirty(t *testing.T) {
+	var b Board
+	id := b.Add("[Task title]", ref).ID
+	b.dirty = false
+	if err := b.Edit(id, "   ", ref); err == nil {
+		t.Fatal("Edit with a blank title returned nil error, want an error")
+	}
+	if b.Dirty() {
+		t.Error("Dirty() = true after a rejected Edit, want false")
+	}
+}
+
+func TestBoardEditUnknownIDDoesNotSetDirty(t *testing.T) {
+	var b Board
+	if err := b.Edit("missing", "[New title]", ref); err == nil {
+		t.Fatal("Edit of an unknown id returned nil error, want an error")
+	}
+	if b.Dirty() {
+		t.Error("Dirty() = true after Edit of an unknown id, want false")
+	}
+}
+
+func TestBoardDeleteUnknownIDDoesNotSetDirty(t *testing.T) {
+	var b Board
+	if err := b.Delete("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete error = %v, want ErrNotFound", err)
+	}
+	if b.Dirty() {
+		t.Error("Dirty() = true after deleting an unknown id, want false")
+	}
+}
+
 func TestBoardByStatusPreservesOrder(t *testing.T) {
 	var b Board
 	first := b.Add("[First]", ref).ID

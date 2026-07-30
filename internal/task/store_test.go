@@ -15,6 +15,27 @@ func TestLoadMissingFileReturnsEmptyBoard(t *testing.T) {
 	if len(b.Tasks) != 0 {
 		t.Errorf("Tasks = %+v, want empty", b.Tasks)
 	}
+	if b.Dirty() {
+		t.Error("Dirty() = true for a freshly loaded board, want false")
+	}
+}
+
+func TestSaveClearsDirty(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tasks.json")
+	b, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load returned %v", err)
+	}
+	b.Add("[Task title]", ref)
+	if !b.Dirty() {
+		t.Fatal("Dirty() = false after Add, want true")
+	}
+	if err := b.Save(); err != nil {
+		t.Fatalf("Save returned %v", err)
+	}
+	if b.Dirty() {
+		t.Error("Dirty() = true after a successful Save, want false")
+	}
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {

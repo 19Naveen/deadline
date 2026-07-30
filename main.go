@@ -32,9 +32,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gotodo:", err)
 		os.Exit(1)
 	}
-	// Final save covers any state the dirty path missed.
-	if err := board.Save(); err != nil {
-		fmt.Fprintln(os.Stderr, "gotodo: save failed:", err)
-		os.Exit(1)
+	// Final save covers any state the dirty path missed. Skipped when the
+	// board isn't dirty so a read-only session can't clobber another
+	// instance's save with a stale snapshot.
+	if board.Dirty() {
+		if err := board.Save(); err != nil {
+			fmt.Fprintln(os.Stderr, "gotodo: save failed:", err)
+			os.Exit(1)
+		}
 	}
 }
