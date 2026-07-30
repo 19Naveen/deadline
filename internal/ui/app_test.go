@@ -132,6 +132,40 @@ func TestHelpOpenCtrlCStillQuits(t *testing.T) {
 	}
 }
 
+func TestCoalescedMultiRuneMovesGrabbedTaskTwoColumns(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	a := NewApp(b)
+	a.board = fixedClock(a.board)
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	a = m.(AppModel)
+	if a.board.mode != modeMove {
+		t.Fatalf("mode = %v, want modeMove", a.board.mode)
+	}
+
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ll")})
+	a = m.(AppModel)
+	if got := a.board.board.Tasks[0].Status; got != task.StatusBlocked {
+		t.Errorf("status after coalesced \"ll\" = %q, want blocked (todo -> doing -> blocked)", got)
+	}
+}
+
+func TestCoalescedMultiRuneMovesSelectionDownTwo(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[One]", ref)
+	b.Add("[Two]", ref)
+	b.Add("[Three]", ref)
+	a := NewApp(b)
+	a.board = fixedClock(a.board)
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj")})
+	a = m.(AppModel)
+	if a.board.sel[0] != 2 {
+		t.Errorf("sel[0] = %d, want 2 after coalesced \"jj\"", a.board.sel[0])
+	}
+}
+
 func TestDirtyMsgTriggersSave(t *testing.T) {
 	b := &task.Board{}
 	dir := t.TempDir()

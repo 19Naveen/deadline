@@ -68,6 +68,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+		// Bubbletea coalesces bytes from a single read into one KeyRunes
+		// message when keys arrive faster than we consume them (held-down
+		// navigation keys, fast typing, paste). Split multi-rune messages
+		// into one KeyMsg per rune so every keypress is still handled.
+		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+			var cmds []tea.Cmd
+			var next tea.Model = m
+			for _, r := range msg.Runes {
+				var cmd tea.Cmd
+				next, cmd = next.(AppModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt})
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+			return next, tea.Batch(cmds...)
+		}
 		if !typing {
 			if m.showHelp {
 				m.showHelp = false // any key closes the overlay, and does nothing else
