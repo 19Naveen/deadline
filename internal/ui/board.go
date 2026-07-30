@@ -3,6 +3,7 @@ package ui
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +42,8 @@ type BoardModel struct {
 	grabID   string      // set while in modeMove
 	grabFrom task.Status // original column of the grabbed task
 
+	now func() time.Time // injectable clock; tests pin it
+
 	width  int
 	height int
 	err    string
@@ -52,8 +55,11 @@ func NewBoardModel(b *task.Board) BoardModel {
 	in.Placeholder = "task title"
 	in.CharLimit = 200
 	in.Prompt = "› "
-	return BoardModel{board: b, focus: focusItem, mode: modeNormal, input: in}
+	return BoardModel{board: b, focus: focusItem, mode: modeNormal, input: in, now: time.Now}
 }
+
+// Now returns the model's injectable clock.
+func (m *BoardModel) Now() time.Time { return m.now() }
 
 // SetSize records the terminal size for layout.
 func (m *BoardModel) SetSize(w, h int) { m.width, m.height = w, h }
@@ -199,8 +205,12 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 		return m, nil
 	}
 	switch m.mode {
-	case modeInput, modeMove, modeConfirm:
-		return m, nil // filled in by the CRUD task
+	case modeInput:
+		return m.updateInput(keyMsg)
+	case modeMove:
+		return m.updateMove(keyMsg)
+	case modeConfirm:
+		return m.updateConfirm(keyMsg)
 	}
 	return m.updateNormal(keyMsg)
 }
@@ -239,9 +249,134 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		if m.focus == focusItem {
 			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
 		}
+	case "a":
+		m.mode = modeInput
+		m.editID = ""
+		m.input.SetValue("")
+		m.input.Focus()
+	case "e":
+		t, ok := m.selectedTask()
+		if !ok {
+			return m, nil
+		}
+		m.mode = modeInput
+		m.editID = t.ID
+		m.input.SetValue(t.Title)
+		m.input.CursorEnd()
+		m.input.Focus()
+	case "d":
+		if _, ok := m.selectedTask(); !ok {
+			return m, nil
+		}
+		m.mode = modeConfirm
+	case "m":
+		t, ok := m.selectedTask()
+		if !ok {
+			return m, nil
+		}
+		m.mode = modeMove
+		m.focus = focusItem
+		m.grabID = t.ID
+		m.grabFrom = t.Status
 	}
 	m.clampSelection()
 	return m, nil
+}
+
+// dirtyMsg signals that the board changed and should be persisted.
+type dirtyMsg struct{}
+
+func dirty() tea.Cmd { return func() tea.Msg { return dirtyMsg{} } }
+
+func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
+	switch k.Type {
+	case tea.KeyEsc:
+		m.mode = modeNormal
+		m.editID = ""
+		m.input.Blur()
+		return m, nil
+
+	case tea.KeyEnter:
+		title := strings.TrimSpace(m.input.Value())
+		if title == "" {
+			m.err = "title must not be blank"
+			return m, nil // stay in input mode
+		}
+		if m.editID != "" {
+			if err := m.board.Edit(m.editID, title, m.now()); err != nil {
+				m.err = err.Error()
+			}
+		} else {
+			m.board.Add(title, m.now())
+			m.col = 0
+			m.sel[0] = len(m.board.ByStatus(task.StatusTodo)) - 1
+		}
+		m.mode = modeNormal
+		m.editID = ""
+		m.input.Blur()
+		m.clampSelection()
+		return m, dirty()
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(k)
+	return m, cmd
+}
+
+func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
+	switch k.String() {
+	case "h", "left":
+		m.shiftGrabbed(-1)
+	case "l", "right":
+		m.shiftGrabbed(1)
+	case "enter":
+		m.mode = modeNormal
+		m.grabID = ""
+		m.clampSelection()
+		return m, dirty()
+	case "esc":
+		if err := m.board.Move(m.grabID, m.grabFrom, m.now()); err != nil {
+			m.err = err.Error()
+		}
+		m.col = m.grabFrom.Index()
+		m.mode = modeNormal
+		m.grabID = ""
+		m.clampSelection()
+		return m, dirty()
+	}
+	return m, nil
+}
+
+// shiftGrabbed moves the grabbed task one column over and follows it.
+func (m *BoardModel) shiftGrabbed(delta int) {
+	next := m.col + delta
+	if next < 0 || next >= len(task.Statuses) {
+		return
+	}
+	if err := m.board.Move(m.grabID, task.Statuses[next], m.now()); err != nil {
+		m.err = err.Error()
+		return
+	}
+	m.col = next
+	m.sel[m.col] = len(m.board.ByStatus(task.Statuses[next])) - 1
+	m.clampSelection()
+}
+
+func (m BoardModel) updateConfirm(k tea.KeyMsg) (BoardModel, tea.Cmd) {
+	m.mode = modeNormal
+	if k.String() != "y" {
+		return m, nil
+	}
+	t, ok := m.selectedTask()
+	if !ok {
+		return m, nil
+	}
+	if err := m.board.Delete(t.ID); err != nil {
+		m.err = err.Error()
+		return m, nil
+	}
+	m.clampSelection()
+	return m, dirty()
 }
 
 // moveColumn shifts the focused column, clamped at both edges.

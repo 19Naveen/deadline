@@ -212,3 +212,168 @@ func TestArrowKeysMirrorHJKL(t *testing.T) {
 		t.Errorf("col = %d, want 2", m.col)
 	}
 }
+
+// fixedClock pins the model's clock so transitions are deterministic.
+func fixedClock(m BoardModel) BoardModel {
+	m.now = func() time.Time { return ref }
+	return m
+}
+
+func TestAddOpensInputAndCommitsOnEnter(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	if m.mode != modeInput {
+		t.Fatalf("mode = %v, want modeInput", m.mode)
+	}
+	m = press(m, "b", "u", "y", " ", "m", "i", "l", "k")
+	m = press(m, "enter")
+
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal after enter", m.mode)
+	}
+	todo := m.board.ByStatus(task.StatusTodo)
+	if len(todo) != 1 {
+		t.Fatalf("todo tasks = %d, want 1", len(todo))
+	}
+	if todo[0].Title != "buy milk" {
+		t.Errorf("Title = %q, want %q", todo[0].Title, "buy milk")
+	}
+}
+
+func TestAddEscCancels(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a", "x", "esc")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal", m.mode)
+	}
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 after cancel", len(m.board.Tasks))
+	}
+}
+
+func TestAddBlankTitleIsRejected(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a", " ", "enter")
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 for a blank title", len(m.board.Tasks))
+	}
+	if m.mode != modeInput {
+		t.Errorf("mode = %v, want modeInput (stay open on a blank title)", m.mode)
+	}
+}
+
+func TestEditReplacesTitle(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Old title]", ref)
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "e")
+	if m.mode != modeInput {
+		t.Fatalf("mode = %v, want modeInput", m.mode)
+	}
+	if m.input.Value() != "[Old title]" {
+		t.Errorf("input prefilled with %q, want the existing title", m.input.Value())
+	}
+	// clear then type
+	m.input.SetValue("new")
+	m = press(m, "enter")
+	if m.board.Tasks[0].Title != "new" {
+		t.Errorf("Title = %q, want %q", m.board.Tasks[0].Title, "new")
+	}
+}
+
+func TestDeleteAsksThenRemoves(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "d")
+	if m.mode != modeConfirm {
+		t.Fatalf("mode = %v, want modeConfirm", m.mode)
+	}
+	if len(m.board.Tasks) != 1 {
+		t.Fatalf("Tasks = %d, want 1 before confirming", len(m.board.Tasks))
+	}
+	m = press(m, "y")
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 after confirming", len(m.board.Tasks))
+	}
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal", m.mode)
+	}
+}
+
+func TestDeleteCancelledByN(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "d", "n")
+	if len(m.board.Tasks) != 1 {
+		t.Errorf("Tasks = %d, want 1 after cancelling", len(m.board.Tasks))
+	}
+}
+
+func TestGrabMoveAndDrop(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	m := fixedClock(NewBoardModel(b))
+
+	m = press(m, "m")
+	if m.mode != modeMove {
+		t.Fatalf("mode = %v, want modeMove", m.mode)
+	}
+	m = press(m, "l", "l") // todo -> doing -> blocked
+	if got := m.board.Tasks[0].Status; got != task.StatusBlocked {
+		t.Errorf("Status during move = %q, want blocked", got)
+	}
+	if m.col != 2 {
+		t.Errorf("col = %d, want 2 (focus follows the grabbed task)", m.col)
+	}
+	m = press(m, "enter")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal after drop", m.mode)
+	}
+	if got := m.board.Tasks[0].Status; got != task.StatusBlocked {
+		t.Errorf("Status after drop = %q, want blocked", got)
+	}
+}
+
+func TestGrabEscRestoresOriginalColumn(t *testing.T) {
+	b := &task.Board{}
+	b.Add("[Task title]", ref)
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "m", "l", "l", "esc")
+	if got := m.board.Tasks[0].Status; got != task.StatusTodo {
+		t.Errorf("Status after esc = %q, want todo", got)
+	}
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal", m.mode)
+	}
+}
+
+func TestMutationEmitsDirtyCmd(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a", "x")
+	m, cmd := m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("commit returned a nil cmd, want a dirtyMsg cmd")
+	}
+	if _, ok := cmd().(dirtyMsg); !ok {
+		t.Errorf("cmd produced %T, want dirtyMsg", cmd())
+	}
+	_ = m
+}
+
+func TestMoveKeysIgnoredOnEmptyColumn(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "m")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal (nothing to grab)", m.mode)
+	}
+	m = press(m, "e")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal (nothing to edit)", m.mode)
+	}
+	m = press(m, "d")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal (nothing to delete)", m.mode)
+	}
+}
