@@ -141,7 +141,7 @@ func weekdayIndex(t time.Time) int {
 // replaying its transition history. Done tasks stop accruing time.
 func TimeInStatus(t task.Task, now time.Time) map[task.Status]time.Duration {
 	out := map[task.Status]time.Duration{}
-	cur := task.StatusTodo
+	var cur task.Status
 	if len(t.History) > 0 {
 		cur = t.History[0].From
 	} else {

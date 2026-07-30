@@ -76,9 +76,11 @@ func NewTask(title string, now time.Time) Task {
 func newID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failing means the process is broken; a time-based
-		// fallback keeps the app usable rather than panicking on Add.
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000000")))
+		// crypto/rand.Read does not fail on any supported platform; a
+		// timestamp-based fallback here would hex-encode ASCII digits and
+		// collide for any two Adds in the same microsecond. An honest crash
+		// beats silently minting colliding IDs.
+		panic(err)
 	}
 	return hex.EncodeToString(b)
 }

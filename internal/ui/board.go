@@ -58,9 +58,6 @@ func NewBoardModel(b *task.Board) BoardModel {
 	return BoardModel{board: b, focus: focusItem, mode: modeNormal, input: in, now: time.Now}
 }
 
-// Now returns the model's injectable clock.
-func (m *BoardModel) Now() time.Time { return m.now() }
-
 // SetSize records the terminal size for layout.
 func (m *BoardModel) SetSize(w, h int) { m.width, m.height = w, h }
 
