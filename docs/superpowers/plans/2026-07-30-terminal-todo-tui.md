@@ -2009,9 +2009,11 @@ git commit -m "feat: render kanban board columns and cards"
 
 **Interfaces:**
 - Consumes: everything from Task 7.
-- Produces: `func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd)` handling navigation only (mutations land in Task 9); `func (m *BoardModel) moveColumn(delta int)`; `func (m *BoardModel) moveItem(delta int)`.
+- Produces: `func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd)` — a thin mode dispatcher; `func (m BoardModel) updateNormal(k tea.KeyMsg) (BoardModel, tea.Cmd)`; `func (m *BoardModel) moveColumn(delta int)`; `func (m *BoardModel) moveItem(delta int)`.
 
-Note: `Update` returns `BoardModel`, not `tea.Model` — the root model in Task 11 owns it as a struct field, so a concrete return type avoids a type assertion on every keypress.
+Notes for the implementer:
+- `Update` returns `BoardModel`, not `tea.Model` — the root model in Task 11 owns it as a struct field, so a concrete return type avoids a type assertion on every keypress.
+- Write `Update` as a dispatcher over `m.mode` from the start, with the non-Normal branches as one-line stubs that return `m, nil`. Task 9 fills those stubs in; nothing written here gets rewritten.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2146,13 +2148,22 @@ Expected: FAIL — `m.Update undefined`.
 Append to `internal/ui/board.go`:
 
 ```go
-// Update handles board-page keys. Mode-specific keys (input, move, confirm)
-// are added in the next task; this handles Normal-mode navigation.
+// Update dispatches on the current mode. The non-Normal branches are stubs
+// until the next task fills them in.
 func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
 	}
+	switch m.mode {
+	case modeInput, modeMove, modeConfirm:
+		return m, nil // filled in by the CRUD task
+	}
+	return m.updateNormal(keyMsg)
+}
+
+// updateNormal handles navigation and focus in the default mode.
+func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 	m.err = ""
 
 	if keyMsg.Type == tea.KeyCtrlT {
@@ -2464,23 +2475,11 @@ func NewBoardModel(b *task.Board) BoardModel {
 
 Add `"time"` to the imports.
 
-- [ ] **Step 4: Replace Update with the full mode-aware version**
+- [ ] **Step 4: Fill in the mode branches**
 
-Replace the `Update` method written in Task 8 with:
+Replace the three stub cases in `Update` with real dispatch — this is the only edit to `Update` itself:
 
 ```go
-// dirtyMsg signals that the board changed and should be persisted.
-type dirtyMsg struct{}
-
-func dirty() tea.Cmd { return func() tea.Msg { return dirtyMsg{} } }
-
-// Update handles every board-page key, dispatching on the current mode.
-func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return m, nil
-	}
-
 	switch m.mode {
 	case modeInput:
 		return m.updateInput(keyMsg)
@@ -2490,41 +2489,20 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 		return m.updateConfirm(keyMsg)
 	}
 	return m.updateNormal(keyMsg)
-}
+```
 
-func (m BoardModel) updateNormal(k tea.KeyMsg) (BoardModel, tea.Cmd) {
-	m.err = ""
+Then add the entry keys to the existing `updateNormal` switch, after the `case "G":` block — do not rewrite the navigation cases already there:
 
-	if k.Type == tea.KeyCtrlT {
-		if m.focus == focusItem {
-			m.focus = focusColumn
-		} else {
-			m.focus = focusItem
-		}
-		return m, nil
-	}
+```go
+// dirtyMsg signals that the board changed and should be persisted.
+type dirtyMsg struct{}
 
-	switch k.String() {
-	case "h", "left":
-		m.moveColumn(-1)
-	case "l", "right":
-		m.moveColumn(1)
-	case "j", "down":
-		if m.focus == focusItem {
-			m.moveItem(1)
-		}
-	case "k", "up":
-		if m.focus == focusItem {
-			m.moveItem(-1)
-		}
-	case "g":
-		if m.focus == focusItem {
-			m.sel[m.col] = 0
-		}
-	case "G":
-		if m.focus == focusItem {
-			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
-		}
+func dirty() tea.Cmd { return func() tea.Msg { return dirtyMsg{} } }
+```
+
+New cases appended to `updateNormal`'s switch:
+
+```go
 	case "a":
 		m.mode = modeInput
 		m.editID = ""
@@ -2554,11 +2532,13 @@ func (m BoardModel) updateNormal(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.focus = focusItem
 		m.grabID = t.ID
 		m.grabFrom = t.Status
-	}
-	m.clampSelection()
-	return m, nil
-}
+```
 
+The existing `}` / `m.clampSelection()` / `return m, nil` tail of `updateNormal` stays as it is.
+
+New methods, added below `updateNormal`:
+
+```go
 func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	switch k.Type {
 	case tea.KeyEsc:
