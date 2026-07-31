@@ -19,7 +19,7 @@ go build -o gotodo .
 
 | Key | Action |
 |---|---|
-| `tab` | switch board ↔ analytics |
+| `tab` | cycle Board → Analytics → Archive |
 | `ctrl+t` | toggle column / item focus |
 | `h` `l` | previous / next column |
 | `j` `k` | previous / next task (item focus) |
@@ -30,6 +30,35 @@ go build -o gotodo .
 | `m` | grab a task; `h`/`l` to move it, `enter` to drop, `esc` to cancel |
 | `?` | toggle help |
 | `q` | quit |
+
+## Task fields
+
+Each task has a title, an optional one-line description, and an optional
+deadline. Press `a` to open the form, `tab` and `shift+tab` to move between
+the three fields, `enter` to save from anywhere, `esc` to cancel.
+
+Deadlines are typed and displayed as `DD/MM/YYYY` — leave the field blank for
+no deadline. The date on the card is colour-coded by how long you have left:
+
+| Colour | Meaning |
+|---|---|
+| green | more than 3 days left |
+| amber | 3 days or less |
+| red | due today or tomorrow |
+| red with ✗ | the deadline has passed |
+
+A completed task shows its deadline in grey — finishing late is history, not
+an ongoing emergency.
+
+## Archive
+
+Done tasks move to the Archive 14 days after you finish them, so the board
+stays clean without losing anything. Sweeps run at startup and hourly while
+gotodo is open. Press `tab` twice to browse the Archive; it is read-only.
+
+Archived tasks still count toward every analytic — throughput, streak, cycle
+time and the heatmap all keep their full history. Only the four column tiles
+and the board itself hide them.
 
 ## Storage
 
