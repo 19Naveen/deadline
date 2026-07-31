@@ -150,7 +150,7 @@ func (m BoardModel) columnHeight() int {
 func (m BoardModel) View() string {
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		return MutedStyle.Render(fmt.Sprintf(
-			"terminal too narrow\n\ngotodo needs at least %d columns for the four-column board.\nThis terminal is %d. Widen it, or press tab for Analytics.",
+			"terminal too narrow\n\ngotodo needs at least %d columns for the four-column board.\nThis terminal is %d. Widen it, or press tab for Analytics or Archive.",
 			need, m.width))
 	}
 	cw := m.columnWidth()

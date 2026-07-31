@@ -40,7 +40,7 @@ func (m AnalyticsModel) View() string {
 	tasks := m.board.Tasks
 
 	sections := []string{
-		m.renderTiles(tasks),
+		m.renderTiles(m.board.Active()),
 		m.renderThroughput(tasks, now),
 		m.renderCycle(tasks, now),
 		m.renderBlocked(tasks, now),
