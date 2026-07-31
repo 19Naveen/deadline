@@ -1077,3 +1077,53 @@ func TestClosingTheFormAlsoClosesThePicker(t *testing.T) {
 		t.Error("the picker is open on a freshly opened form")
 	}
 }
+
+// TestRenderingAColumnDoesNotMutatePackageStyles pins the invariant that
+// renderColumn must copy ColumnStyle/ColumnFocusedStyle before calling a
+// setter on them. lipgloss.Style.Width/Height write into a shared rules map
+// on a plain struct copy, so a missing .Copy() here corrupts the package
+// singleton for every later render (e.g. the form panel via ColumnStyle).
+func TestRenderingAColumnDoesNotMutatePackageStyles(t *testing.T) {
+	m := NewBoardModel(seeded(t))
+	m.SetSize(120, 30)
+	_ = m.View()
+
+	if w := ColumnStyle.GetWidth(); w != 0 {
+		t.Errorf("ColumnStyle.GetWidth() = %d, want 0 — rendering a column mutated the package style", w)
+	}
+	if h := ColumnStyle.GetHeight(); h != 0 {
+		t.Errorf("ColumnStyle.GetHeight() = %d, want 0 — rendering a column mutated the package style", h)
+	}
+	if w := ColumnFocusedStyle.GetWidth(); w != 0 {
+		t.Errorf("ColumnFocusedStyle.GetWidth() = %d, want 0 — rendering a column mutated the package style", w)
+	}
+	if h := ColumnFocusedStyle.GetHeight(); h != 0 {
+		t.Errorf("ColumnFocusedStyle.GetHeight() = %d, want 0 — rendering a column mutated the package style", h)
+	}
+}
+
+// TestFormPanelIsNotSqueezedToOneColumn is the user-visible symptom of the
+// same bug: once a column render has corrupted ColumnStyle's width, the
+// form (which is drawn with ColumnStyle) comes out one board-column wide
+// instead of sizing to its own content.
+//
+// renderForm is measured directly rather than through View(): JoinVertical
+// (used by View to stack the columns and the footer) pads every joined
+// block's lines out to the widest block, which would silently hide a
+// narrowed form behind trailing spaces.
+func TestFormPanelIsNotSqueezedToOneColumn(t *testing.T) {
+	m := fixedClock(NewBoardModel(seeded(t)))
+	m.SetSize(120, 30)
+	_ = m.View() // renders the columns first, as the real app does — this is what corrupts ColumnStyle
+
+	m = press(m, "a")
+	widest := 0
+	for _, line := range strings.Split(m.renderForm(), "\n") {
+		if w := lipgloss.Width(line); w > widest {
+			widest = w
+		}
+	}
+	if squeezed := m.columnWidth() + columnChrome; widest <= squeezed {
+		t.Errorf("widest form line = %d columns, want wider than a single board column (%d) — the form was squeezed", widest, squeezed)
+	}
+}

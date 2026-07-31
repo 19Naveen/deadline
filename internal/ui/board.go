@@ -177,11 +177,11 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 	}
 	lines = append(lines, m.renderCardWindow(idx, items, width)...)
 
-	style := ColumnStyle
+	style := ColumnStyle.Copy()
 	if idx == m.col {
-		style = ColumnFocusedStyle
+		style = ColumnFocusedStyle.Copy()
 		if m.focus == focusColumn {
-			style = style.Copy().BorderForeground(AccentFor(s))
+			style = style.BorderForeground(AccentFor(s))
 		}
 	}
 	return style.Width(width).Height(m.columnHeight()).
