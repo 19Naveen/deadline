@@ -1,76 +1,200 @@
-# gotodo
+<div align="center">
 
-A keyboard-driven terminal kanban board with a built-in analytics page.
+# deadline
 
-## Install
+*Green. Amber. Red. Then a cross.*
 
-```bash
-go build -o gotodo .
+![Go](https://img.shields.io/badge/go-1.22-00ADD8?logo=go&logoColor=white)
+![Stars](https://img.shields.io/github/stars/majipa007/deadline?style=flat)
+![Last commit](https://img.shields.io/github/last-commit/majipa007/deadline)
+
+A terminal kanban board that never lets you forget when something is due.
+
+</div>
+
+---
+
+## The board
+
+Four columns. Three-line cards. Dates that change colour as they close in.
+
+```
+  BOARD    ANALYTICS    ARCHIVE    tab to switch
+╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮
+│ TODO (3)             ││ DOING (1)            ││ BLOCKED (1)          ││ DONE (1)             │
+│                      ││                      ││                      ││                      │
+│ │ Ship the Q3 report ││  Rewrite the parser  ││  Waiting on design   ││  Drop the old API    │
+│ │ Draft, review, se… ││  Split the lexer o…  ││  Mocks not landed    ││                      │
+│ │ ● 09/08/2026       ││  ● 03/08/2026        ││  ● 06/08/2026        ││                      │
+│                      ││                      ││                      ││                      │
+│  Renew the TLS cert  ││                      ││                      ││                      │
+│  Staging box         ││                      ││                      ││                      │
+│  ● 01/08/2026        ││                      ││                      ││                      │
+│                      ││                      ││                      ││                      │
+│  Chase the invoice   ││                      ││                      ││                      │
+│  Third follow-up     ││                      ││                      ││                      │
+│  ● 27/07/2026 ✗      ││                      ││                      ││                      │
+╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯
+focus: item (ctrl+t) · hjkl move · a add · e edit · d delete · m grab · tab analytics · ? help
 ```
 
-## Run
+No mouse. No config file. No account.
 
-```bash
-./gotodo                        # uses ~/.config/gotodo/tasks.json
-./gotodo -file ./mytasks.json   # or point it anywhere
-```
+---
 
-## Keys
+## Deadlines
 
-| Key | Action |
-|---|---|
-| `tab` | cycle Board → Analytics → Archive |
-| `ctrl+t` | toggle column / item focus |
-| `h` `l` | previous / next column |
-| `j` `k` | previous / next task (item focus) |
-| `g` `G` | first / last task in column |
-| `a` | add a task |
-| `e` | edit the selected task |
-| `d` | delete the selected task (confirms with `y`) |
-| `m` | grab a task; `h`/`l` to move it, `enter` to drop, `esc` to cancel |
-| `?` | toggle help |
-| `q` | quit |
+The only thing on the card that changes colour.
 
-## Task fields
+| Time left | Colour | Looks like |
+|---|---|---|
+| more than 3 days | green | `● 09/08/2026` |
+| 3 days or less | amber | `● 03/08/2026` |
+| due today or tomorrow | red | `● 01/08/2026` |
+| the day has passed | red, with a cross | `● 27/07/2026 ✗` |
+| task is done | grey | `● 11/07/2026` |
 
-Each task has a title, an optional one-line description, and an optional
-deadline. Press `a` to open the form, `tab` and `shift+tab` to move between
-the three fields, `enter` to save from anywhere, `esc` to cancel.
+A finished task never turns red. Being late is history by then, not an alarm.
 
-Deadlines are typed and displayed as `DD/MM/YYYY` — leave the field blank for
-no deadline. The date on the card is colour-coded by how long you have left:
+Deadlines are optional. Leave the field blank and the card is two lines instead of three.
 
-| Colour | Meaning |
-|---|---|
-| green | more than 3 days left |
-| amber | 3 days or less |
-| red | due today or tomorrow |
-| red with ✗ | the deadline has passed |
-
-A completed task shows its deadline in grey — finishing late is history, not
-an ongoing emergency.
-
-## Archive
-
-Done tasks move to the Archive 14 days after you finish them, so the board
-stays clean without losing anything. Sweeps run at startup and hourly while
-gotodo is open. Press `tab` twice to browse the Archive; it is read-only.
-
-Archived tasks still count toward every analytic — throughput, streak, cycle
-time and the heatmap all keep their full history. Only the four column tiles
-and the board itself hide them.
-
-## Storage
-
-One JSON file, written atomically after every change. Every status change is
-appended to the task's history, which is what the analytics page reads.
+---
 
 ## Analytics
 
-- Task counts per column
-- 14-day completion throughput sparkline
-- Cycle time: mean and median created→done, plus mean time per column
-- Blocked report: how long each blocked task has been stuck
-- Completion streak and a 12-week heatmap
+Second page. Everything is derived from each task's transition history, so it is measured rather than tallied.
 
-Dates are shown as `DD/MM/YYYY`.
+```
+╭────────╮╭─────────╮╭───────────╮╭────────╮
+│    3   ││    1    ││     1     ││    1   │
+│  TODO  ││  DOING  ││  BLOCKED  ││  DONE  │
+╰────────╯╰─────────╯╰───────────╯╰────────╯
+THROUGHPUT
+             █
+1 completed over 14 days · 18/07/2026 → 31/07/2026
+CYCLE TIME
+mean 3d 22h · median 3d 22h · over 1 completed
+mean time spent per column:
+todo     ████████████████████████ 3d 22h
+doing    ░░░░░░░░░░░░░░░░░░░░░░░░ 0m
+blocked  ░░░░░░░░░░░░░░░░░░░░░░░░ 0m
+done     ░░░░░░░░░░░░░░░░░░░░░░░░ 0m
+BLOCKED
+1 currently blocked
+  Waiting on design                        2h
+STREAK
+current 1 day · longest 1 day
+Mon ············
+    ············
+Wed ············
+    ············
+Fri ···········█
+    ············
+Sun ············
+last 12 weeks, ending 31/07/2026
+```
+
+Cycle time runs from created to done. Time-per-column shows where work actually sits, which is rarely where you think.
+
+---
+
+## Archive
+
+Third page. A task that has sat in Done for 14 days moves here on its own, at launch and once an hour while running. The board stays short without you pruning it.
+
+It is read-only. Nothing you can press there will change a task.
+
+Archived tasks still count in throughput, cycle time, streak and the heatmap. Hiding a task never erases it from your history — only the four column tiles and the board itself stop counting it.
+
+---
+
+## Install
+
+Needs Go 1.22 or newer, and a terminal at least 80 columns wide.
+
+```bash
+git clone git@github.com:majipa007/deadline.git
+cd deadline
+go build -trimpath -ldflags "-s -w" -o ~/.local/bin/gotodo .
+```
+
+Then run it:
+
+```bash
+gotodo
+```
+
+If you get `gotodo: command not found`, `~/.local/bin` is not on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
+```
+
+---
+
+## Keys
+
+| Key | What it does |
+|---|---|
+| `a` | add a task |
+| `e` | edit the selected task |
+| `d` | delete it, after a `y`/`n` confirm |
+| `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
+| `h` `l` | previous / next column |
+| `j` `k` | previous / next task |
+| `g` `G` | first / last task in the column |
+| `ctrl+t` | switch between moving the cursor and moving between whole columns |
+| `tab` | cycle Board, Analytics, Archive |
+| `?` | key list |
+| `q` | quit |
+
+Adding and editing open the same three-field form. `tab` and `shift+tab` move between Title, Description and Deadline. `enter` saves from any field, `esc` throws it away.
+
+Dates go in as `DD/MM/YYYY`. A date it cannot read keeps the form open and tells you the format, rather than quietly dropping what you typed.
+
+---
+
+## Storage
+
+One JSON file, `~/.config/gotodo/tasks.json`. Point somewhere else with `-file`:
+
+```bash
+gotodo -file ./work.json
+```
+
+Separate files are separate boards, which is the easiest way to keep work and personal apart.
+
+Every change writes through a temporary file and a rename, so an interrupted write cannot leave you with half a board. A session where you changed nothing does not write at all, which matters if you ever have two copies open.
+
+---
+
+## Development
+
+```bash
+go test ./...
+go vet ./...
+gofmt -l .
+```
+
+Three packages. `internal/task` is the model and the JSON store, `internal/stats` is pure analytics, `internal/ui` is the three Bubble Tea pages. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic.
+
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more.
+
+---
+
+## FAQ
+
+**Can I get a task back out of the archive?**
+Not from inside the app. Edit the JSON and drop the `"archived": true` line.
+
+**Why 14 days?**
+Long enough that a finished task is still there when someone asks about it. Short enough that Done does not become a scrapbook.
+
+**Does it sync?**
+No. It is one file. Put it in a synced folder if you want it on two machines, but two copies open at once will overwrite each other.
+
+**Why does it say my terminal is too narrow?**
+Four columns and a date need 80 columns. Below that it tells you, instead of drawing a board that overlaps itself. Analytics and Archive are single-column and stay readable at any width.
+
+**Do old task files still work?**
+Yes. Files written before descriptions and deadlines existed load fine, with those fields empty.

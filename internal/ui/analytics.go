@@ -158,8 +158,17 @@ func (m AnalyticsModel) renderStreak(tasks []task.Task, now time.Time) string {
 
 	return strings.Join([]string{
 		TitleStyle.Render("STREAK"),
-		fmt.Sprintf("current %d days · longest %d days", current, longest),
+		fmt.Sprintf("current %s · longest %s", plural(current, "day"), plural(longest, "day")),
 		strings.Join(rows, "\n"),
 		MutedStyle.Render(fmt.Sprintf("last %d weeks, ending %s", heatmapWeeks, FormatDate(now))),
 	}, "\n")
+}
+
+// plural renders a count with its unit, adding an s unless the count is one:
+// "1 day", "3 days", "0 days".
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
