@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gotodo/internal/task"
 )
@@ -112,5 +114,115 @@ func TestArchiveSelectionSurvivesEmptyBoard(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	if m.sel != 0 {
 		t.Errorf("sel = %d, want 0 on an empty archive", m.sel)
+	}
+}
+
+// manyArchivedBoard returns a board with n archived tasks, each with no
+// description or deadline so every entry renders at a fixed, predictable
+// two-line height (title + "archived on" line).
+func manyArchivedBoard(t *testing.T, n int) *task.Board {
+	t.Helper()
+	b := &task.Board{}
+	created := ref.Add(-40 * 24 * time.Hour)
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = b.Add(fmt.Sprintf("[Archived task %d]", i), "", nil, created).ID
+	}
+	for _, id := range ids {
+		if err := b.Move(id, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+			t.Fatalf("Move returned %v", err)
+		}
+	}
+	if got := b.SweepArchive(ref); got != n {
+		t.Fatalf("SweepArchive = %d, want %d", got, n)
+	}
+	return b
+}
+
+// TestArchiveViewFitsWithinHeight ensures the archive page, like the board's
+// columns, never renders taller than the terminal in a short terminal with
+// many archived entries.
+func TestArchiveViewFitsWithinHeight(t *testing.T) {
+	m := NewArchiveModel(manyArchivedBoard(t, 6))
+	m.now = func() time.Time { return ref }
+	m.SetSize(100, 13)
+
+	out := stripANSI(m.View())
+	if got := len(strings.Split(out, "\n")); got > 13 {
+		t.Errorf("archive view is %d lines tall, want at most 13:\n%s", got, out)
+	}
+}
+
+// TestArchiveViewShowsMoreCount checks the "+N more" line appears with the
+// correct count when the archive's entries do not all fit.
+func TestArchiveViewShowsMoreCount(t *testing.T) {
+	m := NewArchiveModel(manyArchivedBoard(t, 6))
+	m.now = func() time.Time { return ref }
+	m.SetSize(100, 13)
+
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "+3 more") {
+		t.Errorf("View missing '+3 more':\n%s", out)
+	}
+}
+
+// TestArchiveViewNoMoreCountWhenEverythingFits ensures the "+N more" line is
+// absent once the terminal is tall enough to show every entry.
+func TestArchiveViewNoMoreCountWhenEverythingFits(t *testing.T) {
+	m := NewArchiveModel(manyArchivedBoard(t, 6))
+	m.now = func() time.Time { return ref }
+	m.SetSize(100, 40)
+
+	out := stripANSI(m.View())
+	if strings.Contains(out, "more") {
+		t.Errorf("View shows a '+N more' line when everything fits:\n%s", out)
+	}
+}
+
+// TestArchiveViewKeepsSelectedEntryVisibleBeyondFold ensures selecting the
+// last entry of a long archive still renders that entry, even though it
+// would fall past the fold in a naive top-down render.
+func TestArchiveViewKeepsSelectedEntryVisibleBeyondFold(t *testing.T) {
+	b := manyArchivedBoard(t, 6)
+	m := NewArchiveModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(100, 13)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+
+	items := b.ArchivedTasks()
+	last := items[len(items)-1].Title
+	out := stripANSI(m.View())
+	if !strings.Contains(out, last) {
+		t.Errorf("selected last entry %q should still be rendered:\n%s", last, out)
+	}
+}
+
+// TestArchiveViewMetaLineFitsNarrowWidth ensures the deadline/archived-on
+// meta line respects the same truncation budget as the title and
+// description, instead of overflowing the terminal. Archived tasks are
+// always Done, so DeadlineUrgency never reports UrgencyOverdue for them
+// (see task.DeadlineUrgency) — the deadline shown here is in the past but
+// renders without the "✗" marker.
+func TestArchiveViewMetaLineFitsNarrowWidth(t *testing.T) {
+	b := &task.Board{}
+	due := ref.AddDate(0, 0, -5)
+	id := b.Add(
+		"[A very long archived task title that would overflow a narrow terminal]",
+		"", &due, ref.Add(-40*24*time.Hour)).ID
+	if err := b.Move(id, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+	if n := b.SweepArchive(ref); n != 1 {
+		t.Fatalf("SweepArchive = %d, want 1", n)
+	}
+
+	m := NewArchiveModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(30, 40)
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		if got := lipgloss.Width(line); got > 30 {
+			t.Errorf("line is %d columns wide, wider than the 30-wide terminal: %q", got, line)
+		}
 	}
 }

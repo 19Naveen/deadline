@@ -194,9 +194,6 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 // rather than clipped away.
 func (m BoardModel) renderCardWindow(idx int, items []task.Task, width int) []string {
 	avail := m.columnHeight() - 2 // header + blank line already emitted
-	if avail < 1 {
-		avail = 1
-	}
 
 	sel := -1
 	if idx == m.col {
@@ -210,44 +207,7 @@ func (m BoardModel) renderCardWindow(idx int, items []task.Task, width int) []st
 		heights[i] = strings.Count(rendered[i], "\n") + 1
 	}
 
-	// windowRows is the row count of [start,end), including the blank
-	// separator before every card after the first in the window.
-	windowRows := func(start, end int) int {
-		rows := 0
-		for i := start; i < end; i++ {
-			if i > start {
-				rows++
-			}
-			rows += heights[i]
-		}
-		return rows
-	}
-
-	// fit grows end greedily from start while the window still fits in avail.
-	fit := func(start int) int {
-		end := start
-		for end < len(items) && windowRows(start, end+1) <= avail {
-			end++
-		}
-		return end
-	}
-
-	start := 0
-	end := fit(start)
-	// Scroll down until the selected card is inside the window.
-	for sel >= end && start < len(items)-1 {
-		start++
-		end = fit(start)
-	}
-
-	more := len(items) - end
-	if more > 0 {
-		// Reserve one row for the "+N more" line.
-		for end > start && windowRows(start, end)+1 > avail {
-			end--
-		}
-		more = len(items) - end
-	}
+	start, end, more := fitWindow(heights, avail, sel)
 
 	var lines []string
 	for i := start; i < end; i++ {
@@ -260,6 +220,63 @@ func (m BoardModel) renderCardWindow(idx int, items []task.Task, width int) []st
 		lines = append(lines, MutedStyle.Render(fmt.Sprintf("+%d more", more)))
 	}
 	return lines
+}
+
+// fitWindow picks the run of entries [start, end) that fits within avail
+// rows — heights[i] gives entry i's own row count, and every entry after
+// the first in the window costs one more row for its blank separator — while
+// scrolling so the entry at sel (if any, sel < 0 means nothing is selected)
+// stays inside the window rather than falling off past the fold. more
+// reports how many trailing entries were left out, after reserving a row
+// for the "+N more" line the caller appends when it is non-zero.
+//
+// Shared by BoardModel's card columns and ArchiveModel's single list: both
+// need the same variable-height, keep-the-selection-visible windowing.
+func fitWindow(heights []int, avail, sel int) (start, end, more int) {
+	if avail < 1 {
+		avail = 1
+	}
+	n := len(heights)
+
+	// windowRows is the row count of [s,e), including the blank separator
+	// before every entry after the first in the window.
+	windowRows := func(s, e int) int {
+		rows := 0
+		for i := s; i < e; i++ {
+			if i > s {
+				rows++
+			}
+			rows += heights[i]
+		}
+		return rows
+	}
+
+	// fit grows e greedily from s while the window still fits in avail.
+	fit := func(s int) int {
+		e := s
+		for e < n && windowRows(s, e+1) <= avail {
+			e++
+		}
+		return e
+	}
+
+	start = 0
+	end = fit(start)
+	// Scroll down until the selected entry is inside the window.
+	for sel >= end && start < n-1 {
+		start++
+		end = fit(start)
+	}
+
+	more = n - end
+	if more > 0 {
+		// Reserve one row for the "+N more" line.
+		for end > start && windowRows(start, end)+1 > avail {
+			end--
+		}
+		more = n - end
+	}
+	return start, end, more
 }
 
 // renderCard draws one card: title, optional description, optional deadline.
