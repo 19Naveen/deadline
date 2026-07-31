@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -26,6 +27,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "gotodo:", err)
 		os.Exit(1)
 	}
+
+	// Tidy the board before the first frame: anything done for two weeks
+	// belongs in the archive, not in the done column.
+	board.SweepArchive(time.Now())
 
 	p := tea.NewProgram(ui.NewApp(board), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
