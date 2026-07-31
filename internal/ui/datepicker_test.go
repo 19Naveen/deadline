@@ -15,16 +15,28 @@ func TestNewDatePickerSeedsOnTheGivenDayAndOpens(t *testing.T) {
 	if !p.open {
 		t.Error("open = false, want true")
 	}
-	if !p.cursor.Equal(day(2026, time.August, 9)) {
+	if !sameDay(p.cursor, day(2026, time.August, 9)) {
 		t.Errorf("cursor = %v, want 09/08/2026", p.cursor)
 	}
 }
 
-func TestNewDatePickerTruncatesTheSeedToMidnight(t *testing.T) {
+func TestNewDatePickerAnchorsTheSeedToItsCalendarDay(t *testing.T) {
 	p := newDatePicker(time.Date(2026, time.August, 9, 17, 45, 3, 0, time.UTC))
-	if !p.cursor.Equal(day(2026, time.August, 9)) {
-		t.Errorf("cursor = %v, want midnight on 09/08/2026", p.cursor)
+	if !sameDay(p.cursor, day(2026, time.August, 9)) {
+		t.Errorf("cursor = %v, want 09/08/2026 regardless of the seed's time of day", p.cursor)
 	}
+}
+
+func TestDatePickerCursorIsAlwaysHeldAtNoon(t *testing.T) {
+	checkNoon := func(t *testing.T, label string, got time.Time) {
+		t.Helper()
+		if h, m, s := got.Clock(); h != 12 || m != 0 || s != 0 || got.Nanosecond() != 0 {
+			t.Errorf("%s cursor = %v, want 12:00:00.000000000", label, got)
+		}
+	}
+	checkNoon(t, "newDatePicker", newDatePicker(time.Date(2026, time.August, 9, 17, 45, 3, 0, time.UTC)).cursor)
+	checkNoon(t, "move", newDatePicker(day(2026, time.August, 9)).move(3).cursor)
+	checkNoon(t, "addMonths", newDatePicker(day(2026, time.August, 9)).addMonths(1).cursor)
 }
 
 func TestMoveByDaysCrossesMonthAndYearBoundaries(t *testing.T) {
@@ -43,7 +55,7 @@ func TestMoveByDaysCrossesMonthAndYearBoundaries(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := datePicker{cursor: c.from, open: true}.move(c.by).cursor
-		if !got.Equal(c.want) {
+		if !sameDay(got, c.want) {
 			t.Errorf("%s: move(%d) = %v, want %v", c.name, c.by, got, c.want)
 		}
 	}
@@ -67,7 +79,7 @@ func TestAddMonthsClampsToTheLastDayOfTheTargetMonth(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := datePicker{cursor: c.from, open: true}.addMonths(c.by).cursor
-		if !got.Equal(c.want) {
+		if !sameDay(got, c.want) {
 			t.Errorf("%s: addMonths(%d) = %v, want %v", c.name, c.by, got, c.want)
 		}
 	}
@@ -113,7 +125,10 @@ func TestMonthGridPlacesDaysMondayFirst(t *testing.T) {
 	}
 }
 
-func TestMonthGridHoldsEveryDayExactlyOnce(t *testing.T) {
+// TestMonthGridCoversEveryDayWithoutDuplicates checks membership and
+// uniqueness only, not cell position — TestMonthGridPlacesDaysMondayFirst
+// and the fixed-index tests below pin the actual Monday-first layout.
+func TestMonthGridCoversEveryDayWithoutDuplicates(t *testing.T) {
 	g := monthGrid(day(2026, time.August, 9))
 	seen := map[int]int{}
 	for _, row := range g {
@@ -151,6 +166,21 @@ func TestMonthGridFitsAMonthStartingSunday(t *testing.T) {
 	}
 	if !g[4][6].IsZero() {
 		t.Errorf("g[4][6] = %v, want blank — February 2026 ends on the Saturday", g[4][6])
+	}
+}
+
+func TestMoveAcrossTheSantiagoDSTTransitionLandsOnTheNextDay(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Skip("tzdata for America/Santiago not available:", err)
+	}
+	// Chile's clocks jump forward at midnight on this date: 2016-08-13 00:00
+	// does not exist as a stable instant there. AddDate from a midnight
+	// cursor can land back on the 13th at 23:00 instead of on the 14th.
+	seed := time.Date(2016, time.August, 13, 0, 0, 0, 0, loc)
+	p := newDatePicker(seed).move(1)
+	if y, m, d := p.cursor.Date(); !(y == 2016 && m == time.August && d == 14) {
+		t.Errorf("cursor = %v, want 14/08/2016", p.cursor)
 	}
 }
 

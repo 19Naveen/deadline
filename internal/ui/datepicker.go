@@ -6,22 +6,31 @@ import "time"
 // It holds only a cursor: the month on screen is whichever month the cursor
 // is in, so navigation and display can never disagree.
 type datePicker struct {
+	// cursor is the selected calendar day, held at noon in its own location
+	// rather than midnight. DST transitions happen at day boundaries; noon
+	// leaves twelve hours of slack on each side, so no real-world transition
+	// can shift the stored instant onto the wrong calendar day the way
+	// midnight-anchored arithmetic can (see move).
 	cursor time.Time
 	open   bool
 }
 
-// newDatePicker opens a picker on the given day, truncated to midnight.
+// newDatePicker opens a picker on the given day, anchored to noon.
 func newDatePicker(seed time.Time) datePicker {
 	y, m, d := seed.Date()
 	return datePicker{
-		cursor: time.Date(y, m, d, 0, 0, 0, 0, seed.Location()),
+		cursor: time.Date(y, m, d, 12, 0, 0, 0, seed.Location()),
 		open:   true,
 	}
 }
 
 // move shifts the cursor by whole days, rolling across months and years.
+// Starting from noon means AddDate cannot cross a DST transition mid-step;
+// re-anchoring the result back to noon keeps repeated moves from drifting.
 func (p datePicker) move(days int) datePicker {
-	p.cursor = p.cursor.AddDate(0, 0, days)
+	moved := p.cursor.AddDate(0, 0, days)
+	y, m, d := moved.Date()
+	p.cursor = time.Date(y, m, d, 12, 0, 0, 0, p.cursor.Location())
 	return p
 }
 
@@ -31,13 +40,23 @@ func (p datePicker) move(days int) datePicker {
 // calendar should do.
 func (p datePicker) addMonths(n int) datePicker {
 	y, m, d := p.cursor.Date()
-	// Stepping from the 1st avoids the same overflow while we find the month.
-	target := time.Date(y, m, 1, 0, 0, 0, 0, p.cursor.Location()).AddDate(0, n, 0)
+	loc := p.cursor.Location()
+	// Stepping from the 1st avoids the same overflow while we find the
+	// month; noon keeps that anchor safe from a DST transition too.
+	target := time.Date(y, m, 1, 12, 0, 0, 0, loc).AddDate(0, n, 0)
 	if last := daysInMonth(target.Year(), target.Month()); d > last {
 		d = last
 	}
-	p.cursor = time.Date(target.Year(), target.Month(), d, 0, 0, 0, 0, p.cursor.Location())
+	p.cursor = time.Date(target.Year(), target.Month(), d, 12, 0, 0, 0, loc)
 	return p
+}
+
+// sameDay reports whether a and b fall on the same calendar day in their
+// own locations, ignoring time of day.
+func sameDay(a, b time.Time) bool {
+	y1, m1, d1 := a.Date()
+	y2, m2, d2 := b.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
 }
 
 // daysInMonth is the length of the given month, leap years included. Day 0
