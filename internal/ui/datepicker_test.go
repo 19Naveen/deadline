@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // day is a terse constructor for a midnight UTC date.
@@ -193,5 +196,78 @@ func TestMonthGridHandlesTheSixRowWorstCase(t *testing.T) {
 	}
 	if !g[5][1].Equal(day(2026, time.March, 31)) {
 		t.Errorf("g[5][1] = %v, want 31/03/2026 in the sixth row", g[5][1])
+	}
+}
+
+func TestPickerViewShowsMonthYearAndWeekdayHeader(t *testing.T) {
+	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 9)))
+
+	if !strings.Contains(out, "August 2026") {
+		t.Errorf("View missing the month heading:\n%s", out)
+	}
+	if !strings.Contains(out, "Mo Tu We Th Fr Sa Su") {
+		t.Errorf("View missing the Monday-first weekday header:\n%s", out)
+	}
+}
+
+func TestPickerViewMarksTheCursor(t *testing.T) {
+	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 1)))
+	if !strings.Contains(out, "> 9") {
+		t.Errorf("View does not mark the cursor day:\n%s", out)
+	}
+}
+
+func TestPickerViewHasOneCursorOnly(t *testing.T) {
+	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 1)))
+	if got := strings.Count(out, ">"); got != 1 {
+		t.Errorf("View marks %d days, want exactly 1:\n%s", got, out)
+	}
+}
+
+func TestPickerViewRowsAllHaveTheSameWidth(t *testing.T) {
+	// The cursor marker must not widen its row. Put the cursor on a day in
+	// the middle of a full week so any extra column would show up.
+	out := newDatePicker(day(2026, time.August, 12)).View(day(2026, time.August, 1))
+	lines := strings.Split(out, "\n")
+
+	header := lipgloss.Width(lines[1]) // the Mo Tu We … row
+	for i, line := range lines[2:] {
+		if w := lipgloss.Width(line); w != header && strings.TrimSpace(stripANSI(line)) != "" {
+			t.Errorf("week row %d is %d columns, want %d to match the header: %q",
+				i, w, header, stripANSI(line))
+		}
+	}
+}
+
+func TestPickerViewShowsEveryDayOfTheMonth(t *testing.T) {
+	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 9)))
+	for _, d := range []string{"1", "15", "31"} {
+		if !strings.Contains(out, d) {
+			t.Errorf("View missing day %s:\n%s", d, out)
+		}
+	}
+	if strings.Contains(out, "32") {
+		t.Errorf("View shows a day past the end of the month:\n%s", out)
+	}
+}
+
+func TestPickerViewFitsTwentyOneColumns(t *testing.T) {
+	// February 2026 starts on a Sunday — the widest leading-blank case.
+	out := newDatePicker(day(2026, time.February, 1)).View(day(2026, time.February, 1))
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 21 {
+			t.Errorf("line is %d columns, want at most 21: %q", w, stripANSI(line))
+		}
+	}
+}
+
+func TestPickerViewRendersEveryMonthWithoutPanicking(t *testing.T) {
+	for m := time.January; m <= time.December; m++ {
+		for _, y := range []int{2024, 2026} { // one leap year, one not
+			out := newDatePicker(day(y, m, 1)).View(day(2026, time.July, 30))
+			if out == "" {
+				t.Errorf("%v %d rendered empty", m, y)
+			}
+		}
 	}
 }

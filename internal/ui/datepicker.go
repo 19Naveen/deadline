@@ -1,6 +1,13 @@
 package ui
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"gotodo/internal/task"
+)
 
 // datePicker is the little month calendar shown under the Deadline field.
 // It holds only a cursor: the month on screen is whichever month the cursor
@@ -80,4 +87,54 @@ func monthGrid(cursor time.Time) [6][7]time.Time {
 		g[i/7][i%7] = time.Date(cursor.Year(), cursor.Month(), d, 0, 0, 0, 0, loc)
 	}
 	return g
+}
+
+// pickerWidth is the rendered width: seven cells of three columns each.
+const pickerWidth = 21
+
+// View renders the month as a Monday-first grid. today is passed in rather
+// than read from the clock so tests stay deterministic.
+//
+// Every cell is exactly three columns — one marker slot plus the day right
+// aligned in two — so the cursor marker can never shift a row out of line
+// with the header. Rows are padded, not trimmed, for the same reason.
+func (p datePicker) View(today time.Time) string {
+	title := p.cursor.Format("January 2006")
+	pad := (pickerWidth - len(title)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+
+	rows := []string{
+		strings.Repeat(" ", pad) + TitleStyle.Render(title),
+		MutedStyle.Render(" Mo Tu We Th Fr Sa Su"),
+	}
+
+	for _, week := range monthGrid(p.cursor) {
+		var b strings.Builder
+		blank := true
+		for _, cell := range week {
+			if cell.IsZero() {
+				b.WriteString("   ")
+				continue
+			}
+			blank = false
+			day := fmt.Sprintf("%2d", cell.Day())
+			switch {
+			case sameDay(cell, p.cursor):
+				b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColAccent).
+					Render(">" + day))
+			case sameDay(cell, today):
+				b.WriteString(" " + lipgloss.NewStyle().
+					Foreground(AccentFor(task.StatusDone)).Render(day))
+			default:
+				b.WriteString(" " + day)
+			}
+		}
+		if blank {
+			continue // a wholly empty trailing week
+		}
+		rows = append(rows, b.String())
+	}
+	return strings.Join(rows, "\n")
 }
