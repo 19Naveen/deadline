@@ -820,6 +820,28 @@ func TestEditWithClearedDeadlineRemovesIt(t *testing.T) {
 	}
 }
 
+func TestFormErrorClearsAfterSuccessfulSave(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // blank title, rejected
+	if m.mode != modeInput {
+		t.Fatalf("mode = %v, want modeInput after blank submit", m.mode)
+	}
+	if m.err == "" {
+		t.Fatal("err is empty, want a message after a blank title submit")
+	}
+
+	m.inputs[fieldTitle].SetValue("[Task title]")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(m.board.Tasks) != 1 {
+		t.Fatalf("Tasks = %d, want 1 after a valid save", len(m.board.Tasks))
+	}
+	if m.err != "" {
+		t.Errorf("err = %q, want empty after a successful save", m.err)
+	}
+}
+
 func TestFormEscCancels(t *testing.T) {
 	m := fixedClock(NewBoardModel(&task.Board{}))
 	m = press(m, "a")

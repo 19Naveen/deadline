@@ -332,6 +332,7 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
 func (m *BoardModel) closeForm() {
 	m.mode = modeNormal
 	m.editID = ""
+	m.err = ""
 	for i := range m.inputs {
 		m.inputs[i].Blur()
 	}
