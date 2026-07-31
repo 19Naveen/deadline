@@ -493,13 +493,9 @@ func (p datePicker) View(today time.Time) string {
 	return strings.Join(rows, "\n")
 }
 
-// sameDay reports whether two times fall on the same calendar day.
-func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-	return ay == by && am == bm && ad == bd
-}
 ```
+
+`sameDay` is already defined in `datepicker.go` by Task 1 — do not redeclare it.
 
 Add `"fmt"`, `"strings"`, `"github.com/charmbracelet/lipgloss"` and `"gotodo/internal/task"` to `datepicker.go`'s imports.
 
