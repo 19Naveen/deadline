@@ -417,3 +417,74 @@ func TestGrabShiftEmitsDirtyCmd(t *testing.T) {
 	}
 	_ = m
 }
+
+// withFields returns a board holding one fully-populated todo task.
+func withFields(t *testing.T, desc string, deadline *time.Time) *task.Board {
+	t.Helper()
+	b := &task.Board{}
+	b.Add("[Ship the report]", desc, deadline, ref)
+	return b
+}
+
+func TestCardShowsTitleDescriptionAndDeadline(t *testing.T) {
+	due := ref.AddDate(0, 0, 5)
+	m := NewBoardModel(withFields(t, "[draft, review, send]", &due))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	out := stripANSI(m.View())
+	for _, want := range []string{"Ship the report", "draft, review, send", "04/08/2026"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCardOmitsDescriptionLineWhenEmpty(t *testing.T) {
+	m := NewBoardModel(withFields(t, "", nil))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], 30))
+	if got := len(strings.Split(card, "\n")); got != 1 {
+		t.Errorf("card has %d lines, want 1 for a task with no description and no deadline:\n%q", got, card)
+	}
+}
+
+func TestCardHasThreeLinesWhenFullyPopulated(t *testing.T) {
+	due := ref.AddDate(0, 0, 5)
+	m := NewBoardModel(withFields(t, "[a description]", &due))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], 30))
+	if got := len(strings.Split(card, "\n")); got != 3 {
+		t.Errorf("card has %d lines, want 3:\n%q", got, card)
+	}
+}
+
+func TestCardMarksOverdueDeadline(t *testing.T) {
+	due := ref.AddDate(0, 0, -3)
+	m := NewBoardModel(withFields(t, "", &due))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "27/07/2026 ✗") {
+		t.Errorf("View missing the overdue marker:\n%s", out)
+	}
+}
+
+func TestCardTruncatesLongDescription(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	m := NewBoardModel(withFields(t, long, nil))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], 30))
+	for _, line := range strings.Split(card, "\n") {
+		if len([]rune(line)) > 30 {
+			t.Errorf("line is %d runes, wider than the 30-wide column: %q", len([]rune(line)), line)
+		}
+	}
+}

@@ -132,6 +132,9 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 		lines = append(lines, MutedStyle.Render("empty"))
 	}
 	for i, t := range items {
+		if i > 0 {
+			lines = append(lines, "")
+		}
 		lines = append(lines, m.renderCard(idx, i, t, width))
 	}
 
@@ -146,17 +149,34 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 		Render(strings.Join(lines, "\n"))
 }
 
+// renderCard draws one card: title, optional description, optional deadline.
+// A card is 1 to 3 lines tall depending on which fields are set.
 func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) string {
-	title := truncate(t.Title, width-4)
+	inner := width - 4
 	selected := colIdx == m.col && itemIdx == m.sel[m.col]
+	grabbed := selected && m.mode == modeMove && t.ID == m.grabID
+
+	title := truncate(t.Title, inner)
+	if grabbed {
+		title = "⇄ " + truncate(t.Title, inner-2)
+	}
+
+	lines := []string{title}
+	if t.Description != "" {
+		lines = append(lines, MutedStyle.Render(truncate(t.Description, inner)))
+	}
+	if dl := RenderDeadline(t, m.now()); dl != "" {
+		lines = append(lines, dl)
+	}
+	body := strings.Join(lines, "\n")
 
 	switch {
-	case selected && m.mode == modeMove && t.ID == m.grabID:
-		return CardGrabbedStyle.Render("⇄ " + title)
+	case grabbed:
+		return CardGrabbedStyle.Render(body)
 	case selected && m.focus == focusItem:
-		return CardSelectedStyle.Render(title)
+		return CardSelectedStyle.Render(body)
 	default:
-		return CardStyle.Render(title)
+		return CardStyle.Render(body)
 	}
 }
 
