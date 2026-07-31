@@ -12,19 +12,19 @@ func analyticsBoard(t *testing.T) *task.Board {
 	t.Helper()
 	b := &task.Board{}
 	// one done today, one done three days ago, one blocked for 9 hours
-	a := b.Add("[Done today]", ref.Add(-30*time.Hour))
+	a := b.Add("[Done today]", "", nil, ref.Add(-30*time.Hour))
 	if err := b.Move(a.ID, task.StatusDone, ref); err != nil {
 		t.Fatalf("Move returned %v", err)
 	}
-	c := b.Add("[Done earlier]", ref.Add(-96*time.Hour))
+	c := b.Add("[Done earlier]", "", nil, ref.Add(-96*time.Hour))
 	if err := b.Move(c.ID, task.StatusDone, ref.Add(-72*time.Hour)); err != nil {
 		t.Fatalf("Move returned %v", err)
 	}
-	d := b.Add("[Stuck]", ref.Add(-20*time.Hour))
+	d := b.Add("[Stuck]", "", nil, ref.Add(-20*time.Hour))
 	if err := b.Move(d.ID, task.StatusBlocked, ref.Add(-9*time.Hour)); err != nil {
 		t.Fatalf("Move returned %v", err)
 	}
-	b.Add("[Fresh]", ref.Add(-time.Hour))
+	b.Add("[Fresh]", "", nil, ref.Add(-time.Hour))
 	return b
 }
 

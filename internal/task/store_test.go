@@ -26,7 +26,7 @@ func TestSaveClearsDirty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned %v", err)
 	}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	if !b.Dirty() {
 		t.Fatal("Dirty() = false after Add, want true")
 	}
@@ -45,7 +45,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned %v", err)
 	}
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	if err := b.Move(id, StatusBlocked, ref); err != nil {
 		t.Fatalf("Move returned %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSaveLeavesNoTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned %v", err)
 	}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	if err := b.Save(); err != nil {
 		t.Fatalf("Save returned %v", err)
 	}

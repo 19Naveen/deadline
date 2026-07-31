@@ -18,7 +18,7 @@ func seeded(t *testing.T) *task.Board {
 	b := &task.Board{}
 	b.SetPath("")
 	for _, s := range task.Statuses {
-		id := b.Add("["+string(s)+" task]", ref).ID
+		id := b.Add("["+string(s)+" task]", "", nil, ref).ID
 		if err := b.Move(id, s, ref); err != nil {
 			t.Fatalf("Move returned %v", err)
 		}
@@ -164,9 +164,9 @@ func TestColumnNavigationClampsAtEdges(t *testing.T) {
 
 func TestJKMoveBetweenItemsInItemFocus(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[One]", ref)
-	b.Add("[Two]", ref)
-	b.Add("[Three]", ref)
+	b.Add("[One]", "", nil, ref)
+	b.Add("[Two]", "", nil, ref)
+	b.Add("[Three]", "", nil, ref)
 	m := press(NewBoardModel(b), "j", "j")
 	if m.sel[0] != 2 {
 		t.Errorf("sel[0] = %d, want 2", m.sel[0])
@@ -183,8 +183,8 @@ func TestJKMoveBetweenItemsInItemFocus(t *testing.T) {
 
 func TestJKDoNotMoveItemsInColumnFocus(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[One]", ref)
-	b.Add("[Two]", ref)
+	b.Add("[One]", "", nil, ref)
+	b.Add("[Two]", "", nil, ref)
 	m := press(NewBoardModel(b), "ctrl+t", "j")
 	if m.sel[0] != 0 {
 		t.Errorf("sel[0] = %d, want 0 (column focus must not move the item cursor)", m.sel[0])
@@ -194,7 +194,7 @@ func TestJKDoNotMoveItemsInColumnFocus(t *testing.T) {
 func TestGAndShiftGJumpToEnds(t *testing.T) {
 	b := &task.Board{}
 	for i := 0; i < 4; i++ {
-		b.Add("[Task title]", ref)
+		b.Add("[Task title]", "", nil, ref)
 	}
 	m := press(NewBoardModel(b), "G")
 	if m.sel[0] != 3 {
@@ -264,7 +264,7 @@ func TestAddBlankTitleIsRejected(t *testing.T) {
 
 func TestEditReplacesTitle(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Old title]", ref)
+	b.Add("[Old title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "e")
 	if m.mode != modeInput {
@@ -283,7 +283,7 @@ func TestEditReplacesTitle(t *testing.T) {
 
 func TestDeleteAsksThenRemoves(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "d")
 	if m.mode != modeConfirm {
@@ -303,7 +303,7 @@ func TestDeleteAsksThenRemoves(t *testing.T) {
 
 func TestDeleteCancelledByN(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "d", "n")
 	if len(m.board.Tasks) != 1 {
@@ -313,7 +313,7 @@ func TestDeleteCancelledByN(t *testing.T) {
 
 func TestGrabMoveAndDrop(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 
 	m = press(m, "m")
@@ -338,7 +338,7 @@ func TestGrabMoveAndDrop(t *testing.T) {
 
 func TestGrabEscRestoresOriginalColumn(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "m", "l", "l", "esc")
 	if got := m.board.Tasks[0].Status; got != task.StatusTodo {
@@ -380,9 +380,9 @@ func TestMoveKeysIgnoredOnEmptyColumn(t *testing.T) {
 
 func TestGrabTracksTaskByIDNotLastSlot(t *testing.T) {
 	b := &task.Board{}
-	t1 := b.Add("[T1]", ref).ID
-	b.Add("[T2]", ref)
-	b.Add("[T3]", ref)
+	t1 := b.Add("[T1]", "", nil, ref).ID
+	b.Add("[T2]", "", nil, ref)
+	b.Add("[T3]", "", nil, ref)
 	// Move T2 to doing first, so doing's insertion order is [T2].
 	if err := b.Move(b.Tasks[1].ID, task.StatusDoing, ref); err != nil {
 		t.Fatalf("Move returned %v", err)
@@ -405,7 +405,7 @@ func TestGrabTracksTaskByIDNotLastSlot(t *testing.T) {
 
 func TestGrabShiftEmitsDirtyCmd(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "m")
 	m, cmd := m.Update(key("l"))

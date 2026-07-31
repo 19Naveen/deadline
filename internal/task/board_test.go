@@ -8,7 +8,7 @@ import (
 
 func TestBoardAddAppendsToTodo(t *testing.T) {
 	var b Board
-	got := b.Add("[Task title]", ref)
+	got := b.Add("[Task title]", "", nil, ref)
 	if got == nil {
 		t.Fatal("Add returned nil")
 	}
@@ -22,7 +22,7 @@ func TestBoardAddAppendsToTodo(t *testing.T) {
 
 func TestBoardMoveRecordsTransition(t *testing.T) {
 	var b Board
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	later := ref.Add(time.Hour)
 
 	if err := b.Move(id, StatusDoing, later); err != nil {
@@ -47,7 +47,7 @@ func TestBoardMoveRecordsTransition(t *testing.T) {
 
 func TestBoardMoveToSameStatusIsNoOp(t *testing.T) {
 	var b Board
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	if err := b.Move(id, StatusTodo, ref.Add(time.Hour)); err != nil {
 		t.Fatalf("Move returned %v, want nil", err)
 	}
@@ -65,9 +65,9 @@ func TestBoardMoveUnknownID(t *testing.T) {
 
 func TestBoardEdit(t *testing.T) {
 	var b Board
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	later := ref.Add(time.Hour)
-	if err := b.Edit(id, "[New title]", later); err != nil {
+	if err := b.Edit(id, "[New title]", "", nil, later); err != nil {
 		t.Fatalf("Edit returned %v, want nil", err)
 	}
 	if b.Tasks[0].Title != "[New title]" {
@@ -80,8 +80,8 @@ func TestBoardEdit(t *testing.T) {
 
 func TestBoardDelete(t *testing.T) {
 	var b Board
-	keep := b.Add("[Keep]", ref).ID
-	drop := b.Add("[Drop]", ref).ID
+	keep := b.Add("[Keep]", "", nil, ref).ID
+	drop := b.Add("[Drop]", "", nil, ref).ID
 
 	if err := b.Delete(drop); err != nil {
 		t.Fatalf("Delete returned %v, want nil", err)
@@ -99,7 +99,7 @@ func TestBoardAddSetsDirty(t *testing.T) {
 	if b.Dirty() {
 		t.Fatal("Dirty() = true before any mutation, want false")
 	}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	if !b.Dirty() {
 		t.Error("Dirty() = false after Add, want true")
 	}
@@ -107,7 +107,7 @@ func TestBoardAddSetsDirty(t *testing.T) {
 
 func TestBoardMoveToSameStatusDoesNotSetDirty(t *testing.T) {
 	var b Board
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	b.dirty = false // Add already set it; reset to isolate Move's effect
 	if err := b.Move(id, StatusTodo, ref.Add(time.Hour)); err != nil {
 		t.Fatalf("Move returned %v, want nil", err)
@@ -119,9 +119,9 @@ func TestBoardMoveToSameStatusDoesNotSetDirty(t *testing.T) {
 
 func TestBoardEditBlankTitleDoesNotSetDirty(t *testing.T) {
 	var b Board
-	id := b.Add("[Task title]", ref).ID
+	id := b.Add("[Task title]", "", nil, ref).ID
 	b.dirty = false
-	if err := b.Edit(id, "   ", ref); err == nil {
+	if err := b.Edit(id, "   ", "", nil, ref); err == nil {
 		t.Fatal("Edit with a blank title returned nil error, want an error")
 	}
 	if b.Dirty() {
@@ -131,7 +131,7 @@ func TestBoardEditBlankTitleDoesNotSetDirty(t *testing.T) {
 
 func TestBoardEditUnknownIDDoesNotSetDirty(t *testing.T) {
 	var b Board
-	if err := b.Edit("missing", "[New title]", ref); err == nil {
+	if err := b.Edit("missing", "[New title]", "", nil, ref); err == nil {
 		t.Fatal("Edit of an unknown id returned nil error, want an error")
 	}
 	if b.Dirty() {
@@ -151,9 +151,9 @@ func TestBoardDeleteUnknownIDDoesNotSetDirty(t *testing.T) {
 
 func TestBoardByStatusPreservesOrder(t *testing.T) {
 	var b Board
-	first := b.Add("[First]", ref).ID
-	second := b.Add("[Second]", ref).ID
-	third := b.Add("[Third]", ref).ID
+	first := b.Add("[First]", "", nil, ref).ID
+	second := b.Add("[Second]", "", nil, ref).ID
+	third := b.Add("[Third]", "", nil, ref).ID
 	if err := b.Move(second, StatusDoing, ref); err != nil {
 		t.Fatalf("Move returned %v", err)
 	}
@@ -164,5 +164,119 @@ func TestBoardByStatusPreservesOrder(t *testing.T) {
 	}
 	if doing := b.ByStatus(StatusDoing); len(doing) != 1 || doing[0].ID != second {
 		t.Errorf("ByStatus(doing) = %+v, want [Second]", doing)
+	}
+}
+
+func TestBoardAddStoresDescriptionAndDeadline(t *testing.T) {
+	var b Board
+	dl := ref.AddDate(0, 0, 3)
+	got := b.Add("[Task title]", "[a description]", &dl, ref)
+
+	if got.Description != "[a description]" {
+		t.Errorf("Description = %q, want %q", got.Description, "[a description]")
+	}
+	if got.Deadline == nil || !got.Deadline.Equal(dl) {
+		t.Errorf("Deadline = %v, want %v", got.Deadline, dl)
+	}
+}
+
+func TestBoardEditReplacesAllThreeFields(t *testing.T) {
+	var b Board
+	first := ref.AddDate(0, 0, 1)
+	id := b.Add("[Old title]", "[old description]", &first, ref).ID
+
+	second := ref.AddDate(0, 0, 9)
+	later := ref.Add(time.Hour)
+	if err := b.Edit(id, "[New title]", "[new description]", &second, later); err != nil {
+		t.Fatalf("Edit returned %v", err)
+	}
+
+	got := b.Tasks[0]
+	if got.Title != "[New title]" {
+		t.Errorf("Title = %q, want %q", got.Title, "[New title]")
+	}
+	if got.Description != "[new description]" {
+		t.Errorf("Description = %q, want %q", got.Description, "[new description]")
+	}
+	if got.Deadline == nil || !got.Deadline.Equal(second) {
+		t.Errorf("Deadline = %v, want %v", got.Deadline, second)
+	}
+	if !got.UpdatedAt.Equal(later) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, later)
+	}
+}
+
+func TestBoardEditCanClearTheDeadline(t *testing.T) {
+	var b Board
+	dl := ref.AddDate(0, 0, 3)
+	id := b.Add("[Task title]", "", &dl, ref).ID
+
+	if err := b.Edit(id, "[Task title]", "", nil, ref); err != nil {
+		t.Fatalf("Edit returned %v", err)
+	}
+	if b.Tasks[0].Deadline != nil {
+		t.Errorf("Deadline = %v, want nil after clearing", b.Tasks[0].Deadline)
+	}
+}
+
+func TestByStatusExcludesArchived(t *testing.T) {
+	var b Board
+	keep := b.Add("[Visible]", "", nil, ref).ID
+	gone := b.Add("[Archived]", "", nil, ref).ID
+	for _, id := range []string{keep, gone} {
+		if err := b.Move(id, StatusDone, ref); err != nil {
+			t.Fatalf("Move returned %v", err)
+		}
+	}
+	for i := range b.Tasks {
+		if b.Tasks[i].ID == gone {
+			b.Tasks[i].Archived = true
+		}
+	}
+
+	done := b.ByStatus(StatusDone)
+	if len(done) != 1 || done[0].ID != keep {
+		t.Errorf("ByStatus(done) = %+v, want only the non-archived task", done)
+	}
+}
+
+func TestActiveAndArchivedTasksPartitionTheBoard(t *testing.T) {
+	var b Board
+	b.Add("[Visible]", "", nil, ref)
+	archivedID := b.Add("[Archived]", "", nil, ref).ID
+	for i := range b.Tasks {
+		if b.Tasks[i].ID == archivedID {
+			b.Tasks[i].Archived = true
+		}
+	}
+
+	if got := b.Active(); len(got) != 1 || got[0].Title != "[Visible]" {
+		t.Errorf("Active() = %+v, want only the visible task", got)
+	}
+	if got := b.ArchivedTasks(); len(got) != 1 || got[0].Title != "[Archived]" {
+		t.Errorf("ArchivedTasks() = %+v, want only the archived task", got)
+	}
+}
+
+func TestArchivedTasksNewestFirst(t *testing.T) {
+	var b Board
+	older := b.Add("[Older]", "", nil, ref).ID
+	newer := b.Add("[Newer]", "", nil, ref).ID
+	oldStamp, newStamp := ref.Add(-48*time.Hour), ref.Add(-2*time.Hour)
+	for i := range b.Tasks {
+		switch b.Tasks[i].ID {
+		case older:
+			b.Tasks[i].Archived, b.Tasks[i].ArchivedAt = true, &oldStamp
+		case newer:
+			b.Tasks[i].Archived, b.Tasks[i].ArchivedAt = true, &newStamp
+		}
+	}
+
+	got := b.ArchivedTasks()
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Title != "[Newer]" || got[1].Title != "[Older]" {
+		t.Errorf("order = [%s %s], want [[Newer] [Older]]", got[0].Title, got[1].Title)
 	}
 }

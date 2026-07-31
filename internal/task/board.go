@@ -2,6 +2,7 @@ package task
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -21,9 +22,12 @@ type Board struct {
 // Dirty reports whether the board has mutations not yet written by Save.
 func (b *Board) Dirty() bool { return b.dirty }
 
-// Add appends a new todo task and returns a pointer into b.Tasks.
-func (b *Board) Add(title string, now time.Time) *Task {
-	b.Tasks = append(b.Tasks, NewTask(strings.TrimSpace(title), "", nil, now))
+// Add appends a new todo task and returns a pointer into b.Tasks. The
+// pointer is only valid until the next Add — take the ID off it, never
+// retain it.
+func (b *Board) Add(title, description string, deadline *time.Time, now time.Time) *Task {
+	b.Tasks = append(b.Tasks, NewTask(
+		strings.TrimSpace(title), strings.TrimSpace(description), deadline, now))
 	b.dirty = true
 	return &b.Tasks[len(b.Tasks)-1]
 }
@@ -54,9 +58,10 @@ func (b *Board) Move(id string, to Status, now time.Time) error {
 	return nil
 }
 
-// Edit replaces the title. Blank titles are rejected so the board cannot
-// grow unreadable empty cards.
-func (b *Board) Edit(id, title string, now time.Time) error {
+// Edit replaces the title, description and deadline. Blank titles are
+// rejected so the board cannot grow unreadable empty cards; a nil deadline
+// clears any existing one.
+func (b *Board) Edit(id, title, description string, deadline *time.Time, now time.Time) error {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return errors.New("title must not be blank")
@@ -66,6 +71,8 @@ func (b *Board) Edit(id, title string, now time.Time) error {
 		return err
 	}
 	t.Title = title
+	t.Description = strings.TrimSpace(description)
+	t.Deadline = deadline
 	t.UpdatedAt = now
 	b.dirty = true
 	return nil
@@ -83,13 +90,48 @@ func (b *Board) Delete(id string) error {
 	return ErrNotFound
 }
 
-// ByStatus returns the tasks in one column, in insertion order.
+// ByStatus returns the non-archived tasks in one column, in insertion order.
+// Archived tasks live on the Archive page and never appear on the board.
 func (b *Board) ByStatus(s Status) []Task {
 	out := make([]Task, 0, len(b.Tasks))
 	for _, t := range b.Tasks {
-		if t.Status == s {
+		if t.Status == s && !t.Archived {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// Active is every task still on the board.
+func (b *Board) Active() []Task {
+	out := make([]Task, 0, len(b.Tasks))
+	for _, t := range b.Tasks {
+		if !t.Archived {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ArchivedTasks is every archived task, most recently archived first.
+func (b *Board) ArchivedTasks() []Task {
+	out := make([]Task, 0, len(b.Tasks))
+	for _, t := range b.Tasks {
+		if t.Archived {
+			out = append(out, t)
+		}
+	}
+	slices.SortStableFunc(out, func(x, y Task) int {
+		return archivedStamp(y).Compare(archivedStamp(x)) // newest first
+	})
+	return out
+}
+
+// archivedStamp falls back to UpdatedAt for a task archived by an older
+// build that did not record ArchivedAt.
+func archivedStamp(t Task) time.Time {
+	if t.ArchivedAt != nil {
+		return *t.ArchivedAt
+	}
+	return t.UpdatedAt
 }

@@ -134,7 +134,7 @@ func TestHelpOpenCtrlCStillQuits(t *testing.T) {
 
 func TestCoalescedMultiRuneMovesGrabbedTaskTwoColumns(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 	a := NewApp(b)
 	a.board = fixedClock(a.board)
 
@@ -153,9 +153,9 @@ func TestCoalescedMultiRuneMovesGrabbedTaskTwoColumns(t *testing.T) {
 
 func TestCoalescedMultiRuneMovesSelectionDownTwo(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[One]", ref)
-	b.Add("[Two]", ref)
-	b.Add("[Three]", ref)
+	b.Add("[One]", "", nil, ref)
+	b.Add("[Two]", "", nil, ref)
+	b.Add("[Three]", "", nil, ref)
 	a := NewApp(b)
 	a.board = fixedClock(a.board)
 
@@ -168,9 +168,9 @@ func TestCoalescedMultiRuneMovesSelectionDownTwo(t *testing.T) {
 
 func TestHelpOpenSwallowsWholeCoalescedBatch(t *testing.T) {
 	b := &task.Board{}
-	b.Add("[One]", ref)
-	b.Add("[Two]", ref)
-	b.Add("[Three]", ref)
+	b.Add("[One]", "", nil, ref)
+	b.Add("[Two]", "", nil, ref)
+	b.Add("[Three]", "", nil, ref)
 	a := NewApp(b)
 	a.board = fixedClock(a.board)
 
@@ -242,7 +242,7 @@ func TestDirtyMsgTriggersSave(t *testing.T) {
 	b := &task.Board{}
 	dir := t.TempDir()
 	b.SetPath(dir + "/tasks.json")
-	b.Add("[Task title]", ref)
+	b.Add("[Task title]", "", nil, ref)
 
 	a := NewApp(b)
 	if _, cmd := a.Update(dirtyMsg{}); cmd != nil {

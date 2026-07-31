@@ -301,11 +301,11 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			return m, nil // stay in input mode
 		}
 		if m.editID != "" {
-			if err := m.board.Edit(m.editID, title, m.now()); err != nil {
+			if err := m.board.Edit(m.editID, title, "", nil, m.now()); err != nil {
 				m.err = err.Error()
 			}
 		} else {
-			m.board.Add(title, m.now())
+			m.board.Add(title, "", nil, m.now())
 			m.col = 0
 			m.sel[0] = len(m.board.ByStatus(task.StatusTodo)) - 1
 		}
