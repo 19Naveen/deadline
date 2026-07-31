@@ -313,12 +313,17 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 // parseDeadline reads a DD/MM/YYYY date. Blank means "no deadline", which is
 // not an error. The layout matches FormatDate, so what the card shows is
 // exactly what you type back in.
+//
+// Parsed in the local zone, not UTC: DaysUntilDeadline re-anchors the
+// deadline to now's location before taking its calendar day. Parsing into
+// UTC would shift that calendar day back for anyone west of UTC, making a
+// deadline typed for "today" read as overdue on the day it's due.
 func parseDeadline(s string) (*time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
-	d, err := time.Parse("02/01/2006", s)
+	d, err := time.ParseInLocation("02/01/2006", s, time.Local)
 	if err != nil {
 		return nil, errors.New("deadline must look like 02/08/2026, or be left blank")
 	}
@@ -562,11 +567,15 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	switch k.String() {
 	case "h", "left":
-		m.shiftGrabbed(-1)
-		return m, dirty()
+		if m.shiftGrabbed(-1) {
+			return m, dirty()
+		}
+		return m, nil
 	case "l", "right":
-		m.shiftGrabbed(1)
-		return m, dirty()
+		if m.shiftGrabbed(1) {
+			return m, dirty()
+		}
+		return m, nil
 	case "enter":
 		m.mode = modeNormal
 		m.grabID = ""
@@ -585,15 +594,17 @@ func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	return m, nil
 }
 
-// shiftGrabbed moves the grabbed task one column over and follows it.
-func (m *BoardModel) shiftGrabbed(delta int) {
+// shiftGrabbed moves the grabbed task one column over and follows it. It
+// reports whether anything actually moved, so a no-op press (at either end
+// of the board, or on a Move error) doesn't trigger a spurious dirty save.
+func (m *BoardModel) shiftGrabbed(delta int) bool {
 	next := m.col + delta
 	if next < 0 || next >= len(task.Statuses) {
-		return
+		return false
 	}
 	if err := m.board.Move(m.grabID, task.Statuses[next], m.now()); err != nil {
 		m.err = err.Error()
-		return
+		return false
 	}
 	m.col = next
 	items := m.board.ByStatus(task.Statuses[next])
@@ -604,6 +615,7 @@ func (m *BoardModel) shiftGrabbed(delta int) {
 		}
 	}
 	m.clampSelection()
+	return true
 }
 
 func (m BoardModel) updateConfirm(k tea.KeyMsg) (BoardModel, tea.Cmd) {

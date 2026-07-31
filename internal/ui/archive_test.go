@@ -71,8 +71,8 @@ func TestArchiveViewShowsArchivedDate(t *testing.T) {
 
 func TestArchiveViewCountsEntries(t *testing.T) {
 	out := stripANSI(fixedArchive(archivedBoard(t)).View())
-	if !strings.Contains(out, "2") || !strings.Contains(out, "ARCHIVE") {
-		t.Errorf("View missing the ARCHIVE heading and its count:\n%s", out)
+	if !strings.Contains(out, "ARCHIVE (2)") {
+		t.Errorf("View missing the ARCHIVE heading with its count:\n%s", out)
 	}
 }
 

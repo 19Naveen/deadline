@@ -419,6 +419,27 @@ func TestGrabShiftEmitsDirtyCmd(t *testing.T) {
 	_ = m
 }
 
+// TestGrabShiftAtRightEdgeIsNoOpAndSkipsDirty pins the fix for a no-op
+// keypress triggering a disk write: grabbing the rightmost column's task and
+// pressing "l" again has nowhere to go, so it must not emit a dirtyMsg cmd
+// (which would otherwise trigger a full, identical Save).
+func TestGrabShiftAtRightEdgeIsNoOpAndSkipsDirty(t *testing.T) {
+	b := &task.Board{}
+	id := b.Add("[Task title]", "", nil, ref).ID
+	if err := b.Move(id, task.StatusDone, ref); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "m") // grab the task in the rightmost (done) column
+	m, cmd := m.Update(key("l"))
+	if cmd != nil {
+		t.Errorf("shift past the right edge produced %T, want a nil cmd (no-op, no save)", cmd())
+	}
+	if got := m.board.Tasks[0].Status; got != task.StatusDone {
+		t.Errorf("Status after no-op shift = %q, want done (unchanged)", got)
+	}
+}
+
 // withFields returns a board holding one fully-populated todo task.
 func withFields(t *testing.T, desc string, deadline *time.Time) *task.Board {
 	t.Helper()
@@ -677,9 +698,39 @@ func TestParseDeadline(t *testing.T) {
 	if got == nil {
 		t.Fatal("parseDeadline returned nil for a valid date")
 	}
-	want := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	// Local, not UTC: DaysUntilDeadline re-anchors the deadline to now's
+	// location before taking its calendar day, so parsing into UTC would
+	// shift the calendar day back for anyone west of UTC (see
+	// TestParseDeadlineThenUrgencyIsNotOffByOneWestOfUTC below).
+	want := time.Date(2026, 8, 2, 0, 0, 0, 0, time.Local)
 	if !got.Equal(want) {
 		t.Errorf("parseDeadline = %v, want %v", *got, want)
+	}
+}
+
+// TestParseDeadlineThenUrgencyIsNotOffByOneWestOfUTC pins the bug where a
+// deadline typed for today rendered overdue on the day it was due. The
+// symptom only showed up for negative UTC offsets: parseDeadline used to
+// parse into UTC, then DaysUntilDeadline re-anchored that instant to the
+// local zone before taking its calendar day, which rolled the deadline back
+// a day for anyone west of UTC. Singapore (+8) never saw it.
+func TestParseDeadlineThenUrgencyIsNotOffByOneWestOfUTC(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("tzdata unavailable")
+	}
+	orig := time.Local
+	time.Local = loc
+	defer func() { time.Local = orig }()
+
+	now := time.Date(2026, 8, 2, 10, 0, 0, 0, loc)
+	deadline, err := parseDeadline("02/08/2026")
+	if err != nil {
+		t.Fatalf("parseDeadline returned %v", err)
+	}
+	tt := task.Task{Title: "[Task title]", Status: task.StatusTodo, CreatedAt: now, Deadline: deadline}
+	if got := task.DeadlineUrgency(tt, now); got != task.UrgencyUrgent {
+		t.Errorf("urgency = %v, want UrgencyUrgent for a deadline due today in a negative-offset zone", got)
 	}
 }
 

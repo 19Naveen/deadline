@@ -43,7 +43,7 @@ func (m AnalyticsModel) View() string {
 		m.renderTiles(m.board.Active()),
 		m.renderThroughput(tasks, now),
 		m.renderCycle(tasks, now),
-		m.renderBlocked(tasks, now),
+		m.renderBlocked(m.board.Active(), now),
 		m.renderStreak(tasks, now),
 	}
 	return strings.Join(sections, "\n\n")

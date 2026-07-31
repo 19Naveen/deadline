@@ -209,6 +209,50 @@ func TestAnalyticsViewRendersTruthfulNumbers(t *testing.T) {
 	}
 }
 
+// TestAnalyticsArchivedBlockedTaskExcludedButCycleTimeStillCounts pins the
+// fix for an archived-but-hand-edited task: an archived blocked task must
+// not show up in the BLOCKED section (that's a present-tense claim about
+// the live board), while an archived done task must still count toward
+// CYCLE TIME (that's a history claim, and archiving must never erase
+// history). Asserting both together stops a "fix" that filters every
+// section down to Active(), which would silently break the cycle-time
+// invariant covered by TestAnalyticsTilesExcludeArchivedButHistoryDoesNot.
+func TestAnalyticsArchivedBlockedTaskExcludedButCycleTimeStillCounts(t *testing.T) {
+	b := &task.Board{}
+
+	blocked := b.Add("[Hand-edited stuck task]", "", nil, ref.Add(-40*24*time.Hour)).ID
+	if err := b.Move(blocked, task.StatusBlocked, ref.Add(-30*24*time.Hour)); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+	done := b.Add("[Long done]", "", nil, ref.Add(-40*24*time.Hour)).ID
+	if err := b.Move(done, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+
+	// Simulate a hand-edited tasks.json with archived:true set on a
+	// blocked task — not reachable through the UI, since SweepArchive
+	// only archives done tasks, but the codebase already defends against
+	// hand-edited files elsewhere (Load's status coercion, archivedStamp's
+	// fallback).
+	for i := range b.Tasks {
+		if b.Tasks[i].ID == blocked || b.Tasks[i].ID == done {
+			b.Tasks[i].Archived = true
+		}
+	}
+
+	out := stripANSI(fixedAnalytics(b).View())
+
+	if strings.Contains(out, "Hand-edited stuck task") {
+		t.Errorf("BLOCKED section shows an archived task:\n%s", out)
+	}
+	if !strings.Contains(out, "nothing is blocked") {
+		t.Errorf("BLOCKED section should read empty once its only entry is archived:\n%s", out)
+	}
+	if !strings.Contains(out, "over 1 completed") {
+		t.Errorf("archiving a done task erased it from cycle time:\n%s", out)
+	}
+}
+
 func TestAnalyticsViewEmptyBoardDoesNotPanic(t *testing.T) {
 	out := fixedAnalytics(&task.Board{}).View()
 	if out == "" {
