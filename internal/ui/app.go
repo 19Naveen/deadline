@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +15,7 @@ type page int
 const (
 	pageBoard page = iota
 	pageAnalytics
+	pageArchive
 )
 
 // AppModel is the root Bubble Tea model: it owns page switching, the help
@@ -21,6 +23,7 @@ const (
 type AppModel struct {
 	board     BoardModel
 	analytics AnalyticsModel
+	archive   ArchiveModel
 	store     *task.Board
 
 	page     page
@@ -29,6 +32,8 @@ type AppModel struct {
 
 	width  int
 	height int
+
+	now func() time.Time
 }
 
 // NewApp builds the root model around a loaded board.
@@ -36,12 +41,22 @@ func NewApp(b *task.Board) AppModel {
 	return AppModel{
 		board:     NewBoardModel(b),
 		analytics: NewAnalyticsModel(b),
+		archive:   NewArchiveModel(b),
 		store:     b,
+		now:       time.Now,
 	}
 }
 
-// Init satisfies tea.Model; nothing to do at startup.
-func (m AppModel) Init() tea.Cmd { return nil }
+// archiveTickMsg fires periodically so a long-running session still tidies
+// itself instead of only archiving at startup.
+type archiveTickMsg time.Time
+
+func archiveTick() tea.Cmd {
+	return tea.Tick(time.Hour, func(t time.Time) tea.Msg { return archiveTickMsg(t) })
+}
+
+// Init starts the hourly archive sweep.
+func (m AppModel) Init() tea.Cmd { return archiveTick() }
 
 // Update routes global keys itself and forwards the rest to the active page.
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -51,6 +66,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.board.SetSize(msg.Width, msg.Height)
 		m.analytics.SetSize(msg.Width, msg.Height)
+		m.archive.SetSize(msg.Width, msg.Height)
 		return m, nil
 
 	case dirtyMsg:
@@ -60,6 +76,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.saveErr = ""
 		}
 		return m, nil
+
+	case archiveTickMsg:
+		if m.store.SweepArchive(m.now()) > 0 {
+			m.board.clampSelection()
+			return m, tea.Batch(dirty(), archiveTick())
+		}
+		return m, archiveTick()
 
 	case tea.KeyMsg:
 		// Every non-normal board mode is modal with respect to the global
@@ -98,11 +121,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch msg.String() {
 			case "tab":
-				if m.page == pageBoard {
-					m.page = pageAnalytics
-				} else {
-					m.page = pageBoard
-				}
+				m.page = (m.page + 1) % 3
 				return m, nil
 			case "?":
 				m.showHelp = !m.showHelp
@@ -111,9 +130,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
-		if m.page == pageBoard {
+		switch m.page {
+		case pageBoard:
 			var cmd tea.Cmd
 			m.board, cmd = m.board.Update(msg)
+			return m, cmd
+		case pageArchive:
+			var cmd tea.Cmd
+			m.archive, cmd = m.archive.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -127,8 +151,11 @@ func (m AppModel) View() string {
 		return m.renderHelp()
 	}
 	body := m.board.View()
-	if m.page == pageAnalytics {
+	switch m.page {
+	case pageAnalytics:
 		body = m.analytics.View()
+	case pageArchive:
+		body = m.archive.View()
 	}
 	parts := []string{m.renderTabs(), body}
 	if m.saveErr != "" {
@@ -141,17 +168,22 @@ func (m AppModel) renderTabs() string {
 	active := lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Padding(0, 2)
 	inactive := MutedStyle.Copy().Padding(0, 2)
 
-	board, analytics := active.Render("BOARD"), inactive.Render("ANALYTICS")
-	if m.page == pageAnalytics {
-		board, analytics = inactive.Render("BOARD"), active.Render("ANALYTICS")
+	names := [3]string{"BOARD", "ANALYTICS", "ARCHIVE"}
+	tabs := make([]string, 0, len(names))
+	for i, n := range names {
+		if page(i) == m.page {
+			tabs = append(tabs, active.Render(n))
+			continue
+		}
+		tabs = append(tabs, inactive.Render(n))
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, board, analytics,
-		MutedStyle.Render("  tab to switch"))
+	tabs = append(tabs, MutedStyle.Render("  tab to switch"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 
 func (m AppModel) renderHelp() string {
 	rows := [][2]string{
-		{"tab", "switch board ↔ analytics"},
+		{"tab", "cycle board → analytics → archive"},
 		{"ctrl+t", "toggle column / item focus"},
 		{"h l", "previous / next column"},
 		{"j k", "previous / next task (item focus)"},
@@ -162,6 +194,8 @@ func (m AppModel) renderHelp() string {
 		{"m", "grab the task, then h/l to move, enter to drop, esc to cancel"},
 		{"?", "toggle this help"},
 		{"q", "quit"},
+		{"", ""},
+		{"deadlines", "green >3 days · amber ≤3 · red ≤1 · red ✗ overdue"},
 	}
 	lines := []string{TitleStyle.Render("KEYS"), ""}
 	for _, r := range rows {

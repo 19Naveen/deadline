@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -33,8 +34,8 @@ func TestTabSwitchesPages(t *testing.T) {
 
 	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = m.(AppModel)
-	if a.page != pageBoard {
-		t.Errorf("page = %v, want pageBoard after a second tab", a.page)
+	if a.page != pageArchive {
+		t.Errorf("page = %v, want pageArchive after a second tab", a.page)
 	}
 }
 
@@ -254,5 +255,125 @@ func TestDirtyMsgTriggersSave(t *testing.T) {
 	reloaded, _ := task.Load(dir + "/tasks.json")
 	if len(reloaded.Tasks) != 1 {
 		t.Errorf("saved tasks = %d, want 1", len(reloaded.Tasks))
+	}
+}
+
+func TestTabCyclesThreePages(t *testing.T) {
+	a := app(t)
+	if a.page != pageBoard {
+		t.Fatalf("page = %v, want pageBoard", a.page)
+	}
+	for _, want := range []page{pageAnalytics, pageArchive, pageBoard} {
+		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyTab})
+		a = m.(AppModel)
+		if a.page != want {
+			t.Fatalf("page = %v, want %v", a.page, want)
+		}
+	}
+}
+
+func TestArchivePageRenders(t *testing.T) {
+	a := app(t)
+	for i := 0; i < 2; i++ {
+		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyTab})
+		a = m.(AppModel)
+	}
+	if !strings.Contains(stripANSI(a.View()), "ARCHIVE") {
+		t.Errorf("archive page did not render:\n%s", a.View())
+	}
+}
+
+func TestArchiveKeysRouteToArchivePage(t *testing.T) {
+	b := &task.Board{}
+	for i := 0; i < 3; i++ {
+		id := b.Add("[Archived task]", "", nil, ref.Add(-40*24*time.Hour)).ID
+		if err := b.Move(id, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+			t.Fatalf("Move returned %v", err)
+		}
+	}
+	if n := b.SweepArchive(ref); n != 3 {
+		t.Fatalf("SweepArchive = %d, want 3", n)
+	}
+
+	a := NewApp(b)
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = m.(AppModel)
+	for i := 0; i < 2; i++ {
+		m, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+		a = m.(AppModel)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	a = m.(AppModel)
+	if a.archive.sel != 1 {
+		t.Errorf("archive sel = %d, want 1 — j must reach the archive page", a.archive.sel)
+	}
+}
+
+func TestArchiveTickSweepsAndSaves(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath(t.TempDir() + "/tasks.json")
+	id := b.Add("[Long done]", "", nil, ref.Add(-40*24*time.Hour)).ID
+	if err := b.Move(id, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+		t.Fatalf("Move returned %v", err)
+	}
+
+	a := NewApp(b)
+	a.now = func() time.Time { return ref }
+	m, cmd := a.Update(archiveTickMsg(ref))
+	a = m.(AppModel)
+
+	if !a.store.Tasks[0].Archived {
+		t.Error("the tick did not archive an eligible task")
+	}
+	if cmd == nil {
+		t.Fatal("the tick returned a nil cmd, want at least the next tick scheduled")
+	}
+}
+
+func TestArchiveTickWithNothingToDoStillReschedules(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath(t.TempDir() + "/tasks.json")
+	b.Add("[Fresh]", "", nil, ref)
+
+	a := NewApp(b)
+	a.now = func() time.Time { return ref }
+	_, cmd := a.Update(archiveTickMsg(ref))
+	if cmd == nil {
+		t.Error("cmd is nil, want the next tick rescheduled even when nothing was archived")
+	}
+}
+
+// TestArchiveTickClampsBoardSelection covers a carried review item: sweeping
+// can shrink the done column out from under the board's cursor. Without a
+// clamp, one frame renders with the cursor pointing past the end of the
+// (now shorter) column.
+func TestArchiveTickClampsBoardSelection(t *testing.T) {
+	b := &task.Board{}
+	doneIdx := -1
+	for i, s := range task.Statuses {
+		if s == task.StatusDone {
+			doneIdx = i
+		}
+	}
+	var lastID string
+	for i := 0; i < 3; i++ {
+		lastID = b.Add("[Old done]", "", nil, ref.Add(-40*24*time.Hour)).ID
+		if err := b.Move(lastID, task.StatusDone, ref.Add(-20*24*time.Hour)); err != nil {
+			t.Fatalf("Move returned %v", err)
+		}
+	}
+	_ = lastID
+
+	a := NewApp(b)
+	a.now = func() time.Time { return ref }
+	a.board.col = doneIdx
+	a.board.sel[doneIdx] = 2 // cursor on the last of the three done cards
+
+	m, _ := a.Update(archiveTickMsg(ref))
+	a = m.(AppModel)
+
+	n := len(a.board.board.ByStatus(task.StatusDone))
+	if a.board.sel[doneIdx] < 0 || a.board.sel[doneIdx] >= max(n, 1) {
+		t.Errorf("sel[%d] = %d out of range for %d remaining done tasks", doneIdx, a.board.sel[doneIdx], n)
 	}
 }
