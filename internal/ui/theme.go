@@ -105,3 +105,39 @@ func FormatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dd %dh", days, hours)
 }
+
+// Deadline palette. Overdue reuses the urgent red — the ✗ marker, not the
+// colour, is what says "you missed it".
+var (
+	colDeadlineFuture = colDone    // green: plenty of time
+	colDeadlineSoon   = colDoing   // amber: 2-3 days
+	colDeadlineUrgent = colBlocked // red: today or tomorrow, or passed
+)
+
+// UrgencyColor is the colour a deadline renders in at each urgency level.
+func UrgencyColor(u task.Urgency) lipgloss.AdaptiveColor {
+	switch u {
+	case task.UrgencySoon:
+		return colDeadlineSoon
+	case task.UrgencyUrgent, task.UrgencyOverdue:
+		return colDeadlineUrgent
+	case task.UrgencyFuture:
+		return colDeadlineFuture
+	}
+	return ColMuted // UrgencyDone and UrgencyNone
+}
+
+// RenderDeadline is the card's deadline line: a coloured bullet, the date in
+// DD/MM/YYYY, and a ✗ when the deadline has passed. Empty when the task has
+// no deadline.
+func RenderDeadline(t task.Task, now time.Time) string {
+	if t.Deadline == nil {
+		return ""
+	}
+	u := task.DeadlineUrgency(t, now)
+	line := "● " + FormatDate(*t.Deadline)
+	if u == task.UrgencyOverdue {
+		line += " ✗"
+	}
+	return lipgloss.NewStyle().Foreground(UrgencyColor(u)).Render(line)
+}
