@@ -391,12 +391,19 @@ func TestArchiveTickClampsBoardSelection(t *testing.T) {
 // scrolls off screen while the picker is open — exactly when the user needs
 // to see the board they're picking a date for.
 //
-// The h==24 exception matches the documented floor in columnHeight (h < 5):
-// at the smallest height tested, with the calendar's footer eating most of
-// the budget, the column height floor can push the frame one row past the
-// terminal. That is a known, benign edge case, not the bug this test hunts.
+// The matrix runs down to 15 rows, well below a normal terminal (a tmux
+// split pane is an ordinary way to land there), because the bug scaled with
+// how little room the footer left, not with any one fixed height.
+//
+// Below minColumnBlockHeight's worth of room, BoardModel.View gives up on
+// the board and renders just the footer (see View's modeInput bailout) —
+// at that point the one thing left that can overflow is the footer itself
+// (the form-with-calendar panel) being taller than the terminal, which no
+// amount of column-sizing logic can fix. That's allowed here, the same way
+// the old columnHeight floor was allowed to overflow by at most one row:
+// it is the footer's own size, not the board-squeezing bug this test hunts.
 func TestViewNeverExceedsTerminalHeight(t *testing.T) {
-	for _, h := range []int{24, 40, 50} {
+	for _, h := range []int{15, 18, 20, 23, 24, 40, 50} {
 		a := NewApp(seeded(t))
 		a.now = func() time.Time { return ref }
 		a.board.now = func() time.Time { return ref }
@@ -406,12 +413,29 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 		check := func(state string, a AppModel) {
 			t.Helper()
 			got := lipgloss.Height(a.View())
-			if got > h && !(h == 24 && got-h <= 1) {
+			// footerRows lives only as a local variable inside View (by
+			// design, per the value-receiver trace: it is not meant to
+			// persist on the model), so recompute it the same way View
+			// does rather than reading a.board.footerRows.
+			footerRows := lipgloss.Height(a.board.renderFooter())
+			boardDropped := a.board.mode == modeInput && a.board.height-4-footerRows < minColumnBlockHeight
+			if got > h && !boardDropped {
 				t.Errorf("height=%d state=%s: View is %d rows tall, overflows a %d-row terminal by %d:\n%s",
 					h, state, got, h, got-h, a.View())
 			}
 		}
-		check("normal", a)
+
+		normal := a
+		check("normal", normal)
+		// Item 2 regression guard: normal mode must not lose a row of board
+		// space to an over-cautious reserve. footerRows is 2 in normal mode
+		// (HelpStyle has PaddingTop(1)), so the pre-fix hard-coded "-6"
+		// budget rendered a frame of height-1 rows; the fixed reserve must
+		// still land there, not shrink the board to claim extra headroom
+		// it doesn't need.
+		if got := lipgloss.Height(normal.View()); got < h-1 {
+			t.Errorf("height=%d: normal mode uses only %d rows, want at least %d (regression: the board lost a row)", h, got, h-1)
+		}
 
 		m2, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 		a2 := m2.(AppModel)

@@ -137,10 +137,26 @@ func (m BoardModel) minBoardWidth() int {
 	return len(task.Statuses) * (minColumnWidth + columnChrome)
 }
 
+// minColumnBlockHeight is the least columnHeight() will ever return: header,
+// blank line, one card row, plus the column's own top+bottom border. Below
+// it a column shows nothing worth looking at, so View bails out of drawing
+// the board entirely rather than forcing this floor and overflowing.
+const minColumnBlockHeight = 5
+
+// rawColumnHeight is columnHeight() before its floor is applied — what the
+// terminal actually has room for, which can go negative on a short terminal
+// with a tall footer (the form, or the form with the calendar open).
+// Reserves one row for the tab bar (AppModel joins that on above this
+// model's own View), two for the column block's border, and one spare row
+// so the board isn't rendered flush against the very last line.
+func (m BoardModel) rawColumnHeight() int {
+	return m.height - 4 - m.footerRows
+}
+
 func (m BoardModel) columnHeight() int {
-	h := m.height - 5 - m.footerRows // tab bar + borders + the actual footer
-	if h < 5 {
-		h = 5
+	h := m.rawColumnHeight()
+	if h < minColumnBlockHeight {
+		h = minColumnBlockHeight
 	}
 	return h
 }
@@ -156,6 +172,11 @@ func (m BoardModel) columnHeight() int {
 // needs that real height, not a hard-coded guess, or the calendar pushes the
 // board off the top of the screen. m has a value receiver, so the recorded
 // height is stashed on this local copy before it is used below.
+//
+// When the form footer alone leaves no room for even a floored column block,
+// clamping to the floor would still overflow the terminal. The user has the
+// form open and is looking at it, so below that point View shows just the
+// footer instead of a board squeezed to nothing and scrolled off screen.
 func (m BoardModel) View() string {
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		return MutedStyle.Render(fmt.Sprintf(
@@ -164,6 +185,10 @@ func (m BoardModel) View() string {
 	}
 	footer := m.renderFooter()
 	m.footerRows = lipgloss.Height(footer)
+
+	if m.mode == modeInput && m.rawColumnHeight() < minColumnBlockHeight {
+		return footer
+	}
 
 	cw := m.columnWidth()
 	cols := make([]string, 0, len(task.Statuses))
