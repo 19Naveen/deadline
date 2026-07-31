@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,6 +30,13 @@ const (
 	modeConfirm
 )
 
+// Fields of the add/edit form, in tab order.
+const (
+	fieldTitle = iota
+	fieldDesc
+	fieldDeadline
+)
+
 // BoardModel is the kanban page.
 type BoardModel struct {
 	board *task.Board
@@ -38,7 +46,9 @@ type BoardModel struct {
 	focus focusMode
 	mode  boardMode
 
-	input    textinput.Model
+	inputs [3]textinput.Model
+	field  int // which of inputs has focus
+
 	editID   string      // set while editing an existing task
 	grabID   string      // set while in modeMove
 	grabFrom task.Status // original column of the grabbed task
@@ -52,11 +62,17 @@ type BoardModel struct {
 
 // NewBoardModel wires a board into a fresh page model.
 func NewBoardModel(b *task.Board) BoardModel {
-	in := textinput.New()
-	in.Placeholder = "task title"
-	in.CharLimit = 200
-	in.Prompt = "› "
-	return BoardModel{board: b, focus: focusItem, mode: modeNormal, input: in, now: time.Now}
+	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now}
+	placeholders := [3]string{"task title", "description (optional)", "DD/MM/YYYY (optional)"}
+	limits := [3]int{200, 500, 10}
+	for i := range m.inputs {
+		in := textinput.New()
+		in.Placeholder = placeholders[i]
+		in.CharLimit = limits[i]
+		in.Prompt = "› "
+		m.inputs[i] = in
+	}
+	return m
 }
 
 // SetSize records the terminal size for layout.
@@ -277,10 +293,87 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 	}
 }
 
+// parseDeadline reads a DD/MM/YYYY date. Blank means "no deadline", which is
+// not an error. The layout matches FormatDate, so what the card shows is
+// exactly what you type back in.
+func parseDeadline(s string) (*time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	d, err := time.Parse("02/01/2006", s)
+	if err != nil {
+		return nil, errors.New("deadline must look like 02/08/2026, or be left blank")
+	}
+	return &d, nil
+}
+
+// openForm puts the model into the add/edit form, seeded with the given
+// values and focused on the title.
+func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
+	m.mode = modeInput
+	m.editID = editID
+	m.field = fieldTitle
+	m.err = ""
+
+	dl := ""
+	if deadline != nil {
+		dl = FormatDate(*deadline)
+	}
+	for i, v := range [3]string{title, desc, dl} {
+		m.inputs[i].SetValue(v)
+		m.inputs[i].CursorEnd()
+		m.inputs[i].Blur()
+	}
+	m.inputs[fieldTitle].Focus()
+}
+
+// closeForm returns to normal mode and drops focus from every field.
+func (m *BoardModel) closeForm() {
+	m.mode = modeNormal
+	m.editID = ""
+	for i := range m.inputs {
+		m.inputs[i].Blur()
+	}
+}
+
+// focusField moves form focus by delta, wrapping at both ends.
+func (m *BoardModel) focusField(delta int) {
+	m.inputs[m.field].Blur()
+	m.field = (m.field + delta + len(m.inputs)) % len(m.inputs)
+	m.inputs[m.field].Focus()
+	m.inputs[m.field].CursorEnd()
+}
+
+// renderForm draws the three-field entry panel shown at the bottom.
+func (m BoardModel) renderForm() string {
+	heading := "new task"
+	if m.editID != "" {
+		heading = "edit task"
+	}
+	labels := [3]string{"Title", "Description", "Deadline"}
+
+	rows := []string{TitleStyle.Render(heading)}
+	for i, label := range labels {
+		name := MutedStyle.Render(fmt.Sprintf("%-12s", label))
+		if i == m.field {
+			name = lipgloss.NewStyle().Foreground(ColAccent).Bold(true).
+				Render(fmt.Sprintf("%-12s", label))
+		}
+		rows = append(rows, name+m.inputs[i].View())
+	}
+	if m.err != "" {
+		rows = append(rows, lipgloss.NewStyle().Foreground(AccentFor(task.StatusBlocked)).
+			Render("! "+m.err))
+	}
+	rows = append(rows, MutedStyle.Render("tab/shift+tab field · enter save · esc cancel"))
+	return ColumnStyle.Render(strings.Join(rows, "\n"))
+}
+
 func (m BoardModel) renderFooter() string {
 	switch m.mode {
 	case modeInput:
-		return "\n" + m.input.View()
+		return "\n" + m.renderForm()
 	case modeMove:
 		return HelpStyle.Render("move: h/l reposition · enter drop · esc cancel")
 	case modeConfirm:
@@ -370,20 +463,13 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
 		}
 	case "a":
-		m.mode = modeInput
-		m.editID = ""
-		m.input.SetValue("")
-		m.input.Focus()
+		m.openForm("", "", "", nil)
 	case "e":
 		t, ok := m.selectedTask()
 		if !ok {
 			return m, nil
 		}
-		m.mode = modeInput
-		m.editID = t.ID
-		m.input.SetValue(t.Title)
-		m.input.CursorEnd()
-		m.input.Focus()
+		m.openForm(t.ID, t.Title, t.Description, t.Deadline)
 	case "d":
 		if _, ok := m.selectedTask(); !ok {
 			return m, nil
@@ -411,35 +497,47 @@ func dirty() tea.Cmd { return func() tea.Msg { return dirtyMsg{} } }
 func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	switch k.Type {
 	case tea.KeyEsc:
-		m.mode = modeNormal
-		m.editID = ""
-		m.input.Blur()
+		m.closeForm()
+		return m, nil
+
+	case tea.KeyTab:
+		m.focusField(1)
+		return m, nil
+
+	case tea.KeyShiftTab:
+		m.focusField(-1)
 		return m, nil
 
 	case tea.KeyEnter:
-		title := strings.TrimSpace(m.input.Value())
+		title := strings.TrimSpace(m.inputs[fieldTitle].Value())
 		if title == "" {
 			m.err = "title must not be blank"
-			return m, nil // stay in input mode
+			return m, nil // stay in the form
 		}
+		deadline, err := parseDeadline(m.inputs[fieldDeadline].Value())
+		if err != nil {
+			m.err = err.Error()
+			return m, nil // stay in the form
+		}
+		desc := strings.TrimSpace(m.inputs[fieldDesc].Value())
+
 		if m.editID != "" {
-			if err := m.board.Edit(m.editID, title, "", nil, m.now()); err != nil {
+			if err := m.board.Edit(m.editID, title, desc, deadline, m.now()); err != nil {
 				m.err = err.Error()
+				return m, nil
 			}
 		} else {
-			m.board.Add(title, "", nil, m.now())
+			m.board.Add(title, desc, deadline, m.now())
 			m.col = 0
 			m.sel[0] = len(m.board.ByStatus(task.StatusTodo)) - 1
 		}
-		m.mode = modeNormal
-		m.editID = ""
-		m.input.Blur()
+		m.closeForm()
 		m.clampSelection()
 		return m, dirty()
 	}
 
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(k)
+	m.inputs[m.field], cmd = m.inputs[m.field].Update(k)
 	return m, cmd
 }
 

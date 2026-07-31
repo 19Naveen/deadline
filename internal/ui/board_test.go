@@ -271,11 +271,11 @@ func TestEditReplacesTitle(t *testing.T) {
 	if m.mode != modeInput {
 		t.Fatalf("mode = %v, want modeInput", m.mode)
 	}
-	if m.input.Value() != "[Old title]" {
-		t.Errorf("input prefilled with %q, want the existing title", m.input.Value())
+	if m.inputs[fieldTitle].Value() != "[Old title]" {
+		t.Errorf("input prefilled with %q, want the existing title", m.inputs[fieldTitle].Value())
 	}
 	// clear then type
-	m.input.SetValue("new")
+	m.inputs[fieldTitle].SetValue("new")
 	m = press(m, "enter")
 	if m.board.Tasks[0].Title != "new" {
 		t.Errorf("Title = %q, want %q", m.board.Tasks[0].Title, "new")
@@ -666,5 +666,170 @@ func TestViewRendersNormallyBeforeFirstWindowSizeMsg(t *testing.T) {
 		if !strings.Contains(out, s.Label()) {
 			t.Errorf("width=0: View missing header %q", s.Label())
 		}
+	}
+}
+
+func TestParseDeadline(t *testing.T) {
+	got, err := parseDeadline("02/08/2026")
+	if err != nil {
+		t.Fatalf("parseDeadline returned %v", err)
+	}
+	if got == nil {
+		t.Fatal("parseDeadline returned nil for a valid date")
+	}
+	want := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("parseDeadline = %v, want %v", *got, want)
+	}
+}
+
+func TestParseDeadlineBlankIsNoDeadline(t *testing.T) {
+	got, err := parseDeadline("   ")
+	if err != nil {
+		t.Fatalf("parseDeadline returned %v", err)
+	}
+	if got != nil {
+		t.Errorf("parseDeadline = %v, want nil for blank input", got)
+	}
+}
+
+func TestParseDeadlineRejectsUSFormatAndGarbage(t *testing.T) {
+	for _, in := range []string{"2026-08-02", "notadate", "13/13/2026"} {
+		if _, err := parseDeadline(in); err == nil {
+			t.Errorf("parseDeadline(%q) returned nil error, want a rejection", in)
+		}
+	}
+}
+
+func TestFormTabCyclesFields(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	if m.field != fieldTitle {
+		t.Fatalf("field = %d, want fieldTitle on open", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldDesc {
+		t.Errorf("field = %d, want fieldDesc after tab", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldDeadline {
+		t.Errorf("field = %d, want fieldDeadline after two tabs", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldTitle {
+		t.Errorf("field = %d, want it to wrap back to fieldTitle", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.field != fieldDeadline {
+		t.Errorf("field = %d, want fieldDeadline after shift+tab from the first field", m.field)
+	}
+}
+
+func TestFormSavesAllThreeFields(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.inputs[fieldTitle].SetValue("[Ship the report]")
+	m.inputs[fieldDesc].SetValue("[draft, review, send]")
+	m.inputs[fieldDeadline].SetValue("02/08/2026")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.mode != modeNormal {
+		t.Fatalf("mode = %v, want modeNormal after save", m.mode)
+	}
+	todo := m.board.ByStatus(task.StatusTodo)
+	if len(todo) != 1 {
+		t.Fatalf("todo tasks = %d, want 1", len(todo))
+	}
+	got := todo[0]
+	if got.Title != "[Ship the report]" {
+		t.Errorf("Title = %q", got.Title)
+	}
+	if got.Description != "[draft, review, send]" {
+		t.Errorf("Description = %q", got.Description)
+	}
+	if got.Deadline == nil || !got.Deadline.Equal(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("Deadline = %v, want 02/08/2026", got.Deadline)
+	}
+}
+
+func TestFormRejectsBadDeadlineAndStaysOpen(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.inputs[fieldTitle].SetValue("[Ship the report]")
+	m.inputs[fieldDeadline].SetValue("tomorrow")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.mode != modeInput {
+		t.Errorf("mode = %v, want modeInput — the form must stay open on a bad date", m.mode)
+	}
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 — nothing should be saved", len(m.board.Tasks))
+	}
+	if m.err == "" {
+		t.Error("err is empty, want a message explaining the date format")
+	}
+}
+
+func TestFormBlankTitleStillRejected(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.inputs[fieldDesc].SetValue("[a description]")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.mode != modeInput {
+		t.Errorf("mode = %v, want modeInput", m.mode)
+	}
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0", len(m.board.Tasks))
+	}
+}
+
+func TestEditPrefillsAllThreeFields(t *testing.T) {
+	due := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	b := &task.Board{}
+	b.Add("[Old title]", "[old description]", &due, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "e")
+	if m.mode != modeInput {
+		t.Fatalf("mode = %v, want modeInput", m.mode)
+	}
+	if got := m.inputs[fieldTitle].Value(); got != "[Old title]" {
+		t.Errorf("title field = %q", got)
+	}
+	if got := m.inputs[fieldDesc].Value(); got != "[old description]" {
+		t.Errorf("description field = %q", got)
+	}
+	if got := m.inputs[fieldDeadline].Value(); got != "02/08/2026" {
+		t.Errorf("deadline field = %q, want 02/08/2026", got)
+	}
+}
+
+func TestEditWithClearedDeadlineRemovesIt(t *testing.T) {
+	due := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	b := &task.Board{}
+	b.Add("[Task title]", "", &due, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "e")
+	m.inputs[fieldDeadline].SetValue("")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.board.Tasks[0].Deadline != nil {
+		t.Errorf("Deadline = %v, want nil after clearing the field", m.board.Tasks[0].Deadline)
+	}
+}
+
+func TestFormEscCancels(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.inputs[fieldTitle].SetValue("[Task title]")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal", m.mode)
+	}
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 after cancel", len(m.board.Tasks))
 	}
 }

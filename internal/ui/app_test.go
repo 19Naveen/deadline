@@ -76,8 +76,8 @@ func TestQIsTypableWhileAddingATask(t *testing.T) {
 			t.Fatal("q quit the app while the input was open")
 		}
 	}
-	if a.board.input.Value() != "q" {
-		t.Errorf("input value = %q, want %q", a.board.input.Value(), "q")
+	if a.board.inputs[fieldTitle].Value() != "q" {
+		t.Errorf("input value = %q, want %q", a.board.inputs[fieldTitle].Value(), "q")
 	}
 }
 
