@@ -54,22 +54,29 @@ type Transition struct {
 
 // Task is one card on the board.
 type Task struct {
-	ID        string       `json:"id"`
-	Title     string       `json:"title"`
-	Status    Status       `json:"status"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	History   []Transition `json:"history,omitempty"`
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description,omitempty"`
+	Deadline    *time.Time   `json:"deadline,omitempty"`
+	Status      Status       `json:"status"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	Archived    bool         `json:"archived,omitempty"`
+	ArchivedAt  *time.Time   `json:"archived_at,omitempty"`
+	History     []Transition `json:"history,omitempty"`
 }
 
-// NewTask builds a task in the todo column with a fresh random ID.
-func NewTask(title string, now time.Time) Task {
+// NewTask builds a task in the todo column with a fresh random ID. A nil
+// deadline means the task has none; description may be empty.
+func NewTask(title, description string, deadline *time.Time, now time.Time) Task {
 	return Task{
-		ID:        newID(),
-		Title:     title,
-		Status:    StatusTodo,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          newID(),
+		Title:       title,
+		Description: description,
+		Deadline:    deadline,
+		Status:      StatusTodo,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 }
 

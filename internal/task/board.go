@@ -23,7 +23,7 @@ func (b *Board) Dirty() bool { return b.dirty }
 
 // Add appends a new todo task and returns a pointer into b.Tasks.
 func (b *Board) Add(title string, now time.Time) *Task {
-	b.Tasks = append(b.Tasks, NewTask(strings.TrimSpace(title), now))
+	b.Tasks = append(b.Tasks, NewTask(strings.TrimSpace(title), "", nil, now))
 	b.dirty = true
 	return &b.Tasks[len(b.Tasks)-1]
 }

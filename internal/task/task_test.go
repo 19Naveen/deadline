@@ -1,6 +1,8 @@
 package task
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -8,7 +10,7 @@ import (
 var ref = time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 
 func TestNewTaskDefaults(t *testing.T) {
-	got := NewTask("[Task title]", ref)
+	got := NewTask("[Task title]", "", nil, ref)
 	if got.Title != "[Task title]" {
 		t.Errorf("Title = %q, want %q", got.Title, "[Task title]")
 	}
@@ -27,8 +29,8 @@ func TestNewTaskDefaults(t *testing.T) {
 }
 
 func TestNewTaskIDsAreUnique(t *testing.T) {
-	a := NewTask("[Task title]", ref)
-	b := NewTask("[Task title]", ref)
+	a := NewTask("[Task title]", "", nil, ref)
+	b := NewTask("[Task title]", "", nil, ref)
 	if a.ID == b.ID {
 		t.Fatalf("IDs collided: %q", a.ID)
 	}
@@ -70,5 +72,64 @@ func TestCompletedAtNotDone(t *testing.T) {
 	tk := Task{Status: StatusDoing, History: []Transition{{From: StatusTodo, To: StatusDoing, At: ref}}}
 	if _, ok := CompletedAt(tk); ok {
 		t.Error("CompletedAt returned ok=true for a non-done task")
+	}
+}
+
+func TestNewTaskCarriesDescriptionAndDeadline(t *testing.T) {
+	due := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	got := NewTask("[Task title]", "[a short description]", &due, ref)
+
+	if got.Description != "[a short description]" {
+		t.Errorf("Description = %q, want %q", got.Description, "[a short description]")
+	}
+	if got.Deadline == nil {
+		t.Fatal("Deadline is nil, want a value")
+	}
+	if !got.Deadline.Equal(due) {
+		t.Errorf("Deadline = %v, want %v", *got.Deadline, due)
+	}
+	if got.Archived {
+		t.Error("Archived = true, want false for a new task")
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("ArchivedAt = %v, want nil", got.ArchivedAt)
+	}
+}
+
+func TestNewTaskWithoutDeadline(t *testing.T) {
+	got := NewTask("[Task title]", "", nil, ref)
+	if got.Deadline != nil {
+		t.Errorf("Deadline = %v, want nil", got.Deadline)
+	}
+	if got.Description != "" {
+		t.Errorf("Description = %q, want empty", got.Description)
+	}
+}
+
+func TestTaskJSONOmitsEmptyNewFields(t *testing.T) {
+	data, err := json.Marshal(NewTask("[Task title]", "", nil, ref))
+	if err != nil {
+		t.Fatalf("Marshal returned %v", err)
+	}
+	for _, key := range []string{"description", "deadline", "archived", "archived_at"} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("JSON contains %q for an empty field; want it omitted:\n%s", key, data)
+		}
+	}
+}
+
+func TestTaskJSONFromOlderVersionStillLoads(t *testing.T) {
+	// A file written before deadlines existed must load with zero values.
+	const old = `{"id":"abc","title":"[Task title]","status":"todo",
+		"created_at":"2026-07-30T12:00:00Z","updated_at":"2026-07-30T12:00:00Z"}`
+	var got Task
+	if err := json.Unmarshal([]byte(old), &got); err != nil {
+		t.Fatalf("Unmarshal returned %v", err)
+	}
+	if got.Title != "[Task title]" {
+		t.Errorf("Title = %q, want %q", got.Title, "[Task title]")
+	}
+	if got.Deadline != nil || got.Description != "" || got.Archived {
+		t.Errorf("new fields should be zero, got %+v", got)
 	}
 }
