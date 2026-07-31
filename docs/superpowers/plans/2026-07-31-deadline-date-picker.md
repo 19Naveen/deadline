@@ -203,14 +203,31 @@ func TestMonthGridHoldsEveryDayExactlyOnce(t *testing.T) {
 }
 
 func TestMonthGridFitsAMonthStartingSunday(t *testing.T) {
-	// 01/02/2026 is a Sunday — the worst case for a Monday-first grid,
-	// pushing the 1st into column 6 and the month across six rows.
+	// 01/02/2026 is a Sunday — the largest possible lead for a Monday-first
+	// grid, pushing the 1st all the way into column 6.
 	g := monthGrid(day(2026, time.February, 1))
 	if !g[0][6].Equal(day(2026, time.February, 1)) {
 		t.Errorf("g[0][6] = %v, want 01/02/2026", g[0][6])
 	}
-	if !g[4][6].Equal(day(2026, time.February, 28)) {
-		t.Errorf("g[4][6] = %v, want 28/02/2026 in the last populated cell", g[4][6])
+	// Lead 6 plus 28 days ends at index 33, so the last day sits at row 4,
+	// column 5. 28/02/2026 is a Saturday, not a Sunday.
+	if !g[4][5].Equal(day(2026, time.February, 28)) {
+		t.Errorf("g[4][5] = %v, want 28/02/2026 in the last populated cell", g[4][5])
+	}
+	if !g[4][6].IsZero() {
+		t.Errorf("g[4][6] = %v, want blank — February 2026 ends on the Saturday", g[4][6])
+	}
+}
+
+func TestMonthGridHandlesTheSixRowWorstCase(t *testing.T) {
+	// A 31-day month starting on a Sunday needs all six rows: lead 6 plus
+	// 31 days ends at index 36, which is row 5.
+	g := monthGrid(day(2026, time.March, 1)) // 01/03/2026 is a Sunday
+	if !g[0][6].Equal(day(2026, time.March, 1)) {
+		t.Errorf("g[0][6] = %v, want 01/03/2026", g[0][6])
+	}
+	if !g[5][1].Equal(day(2026, time.March, 31)) {
+		t.Errorf("g[5][1] = %v, want 31/03/2026 in the sixth row", g[5][1])
 	}
 }
 ```
