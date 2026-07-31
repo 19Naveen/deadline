@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gotodo/internal/task"
 )
@@ -481,10 +482,120 @@ func TestCardTruncatesLongDescription(t *testing.T) {
 	m.now = func() time.Time { return ref }
 	m.SetSize(160, 40)
 
-	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], 30))
+	const width = 30
+	const inner = width - 4 // renderCard's truncation budget
+	// renderCard(0, 0, ...) is selected by default (colIdx/itemIdx match the
+	// model's defaults), so CardSelectedStyle's left border + padding add 2
+	// more columns on top of the truncated content.
+	const maxLineWidth = inner + 2
+	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], width))
 	for _, line := range strings.Split(card, "\n") {
-		if len([]rune(line)) > 30 {
-			t.Errorf("line is %d runes, wider than the 30-wide column: %q", len([]rune(line)), line)
+		if got := lipgloss.Width(line); got > maxLineWidth {
+			t.Errorf("line is %d columns wide, wider than the %d-wide truncation budget: %q", got, maxLineWidth, line)
 		}
+	}
+}
+
+// TestCardDeadlineFitsAtMinimumColumnWidth pins the enforced minimum column
+// width (18, set by columnWidth) as wide enough for the worst-case deadline
+// line: "● DD/MM/YYYY ✗" (14 display columns) plus the card's own padding.
+// Checked in all three render states because each uses a different style.
+func TestCardDeadlineFitsAtMinimumColumnWidth(t *testing.T) {
+	overdue := ref.AddDate(0, 0, -1)
+	b := &task.Board{}
+	b.Add("[T]", "", &overdue, ref)
+	m := NewBoardModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(4, 40) // forces columnWidth() down to its floor
+	w := m.columnWidth()
+	tt := m.board.ByStatus(task.StatusTodo)[0]
+
+	check := func(label, card string) {
+		for _, line := range strings.Split(stripANSI(card), "\n") {
+			if got := lipgloss.Width(line); got > w {
+				t.Errorf("%s: line is %d columns wide, wider than the %d-wide column: %q", label, got, w, line)
+			}
+		}
+	}
+
+	// normal (not selected): use a column index that never matches m.col.
+	check("normal", m.renderCard(1, 0, tt, w))
+
+	// selected
+	check("selected", m.renderCard(0, 0, tt, w))
+
+	// grabbed
+	grabbed := m
+	grabbed.mode = modeMove
+	grabbed.grabID = tt.ID
+	check("grabbed", grabbed.renderCard(0, 0, tt, w))
+}
+
+func TestCardCJKDescriptionFitsColumn(t *testing.T) {
+	long := strings.Repeat("日本語", 20)
+	m := NewBoardModel(withFields(t, long, nil))
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 40)
+
+	const width = 30
+	card := stripANSI(m.renderCard(0, 0, m.board.ByStatus(task.StatusTodo)[0], width))
+	for _, line := range strings.Split(card, "\n") {
+		if got := lipgloss.Width(line); got > width {
+			t.Errorf("line is %d columns wide, wider than the %d-wide column: %q", got, width, line)
+		}
+	}
+}
+
+// TestColumnClipsToHeight ensures a column with many cards never renders
+// taller than columnHeight, in a terminal too short to show them all.
+func TestColumnClipsToHeight(t *testing.T) {
+	b := &task.Board{}
+	for i := 0; i < 20; i++ {
+		b.Add("[Task title]", "", nil, ref)
+	}
+	m := NewBoardModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 20)
+
+	out := stripANSI(m.renderColumn(0, task.StatusTodo, m.columnWidth()))
+	got := len(strings.Split(out, "\n"))
+	if want := m.columnHeight() + 2; got > want { // +2 for the column's own top/bottom border
+		t.Errorf("column is %d lines tall, want at most %d", got, want)
+	}
+}
+
+// TestColumnShowsMoreCount checks the "+N more" line appears with the
+// correct count when a column's cards do not all fit.
+func TestColumnShowsMoreCount(t *testing.T) {
+	b := &task.Board{}
+	for i := 0; i < 20; i++ {
+		b.Add("[Task title]", "", nil, ref)
+	}
+	m := NewBoardModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 20)
+
+	out := stripANSI(m.renderColumn(0, task.StatusTodo, m.columnWidth()))
+	if !strings.Contains(out, "more") {
+		t.Errorf("column with 20 cards in a short terminal should show a '+N more' line:\n%s", out)
+	}
+}
+
+// TestColumnKeepsSelectedCardVisibleBeyondFold ensures selecting the last
+// card of a long column still renders that card, even though it would fall
+// past the fold in a naive top-down render.
+func TestColumnKeepsSelectedCardVisibleBeyondFold(t *testing.T) {
+	b := &task.Board{}
+	for i := 0; i < 20; i++ {
+		b.Add("[Task title]", "", nil, ref)
+	}
+	m := NewBoardModel(b)
+	m.now = func() time.Time { return ref }
+	m.SetSize(160, 20)
+	m = press(m, "G") // select the last card
+
+	out := stripANSI(m.renderColumn(0, task.StatusTodo, m.columnWidth()))
+	if !strings.Contains(out, "Task title") {
+		t.Errorf("selected last card should still be rendered:\n%s", out)
 	}
 }

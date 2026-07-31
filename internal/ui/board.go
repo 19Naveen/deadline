@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -94,8 +95,11 @@ func (m BoardModel) columnWidth() int {
 		w = 80
 	}
 	per := w/len(task.Statuses) - 2
-	if per < 12 {
-		per = 12
+	// 18 is the floor set by the widest deadline line ("● DD/MM/YYYY ✗", 14
+	// columns) plus the card's own border and padding. Do not lower this
+	// without re-checking TestCardDeadlineFitsAtMinimumColumnWidth.
+	if per < 18 {
+		per = 18
 	}
 	return per
 }
@@ -131,12 +135,7 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 	if len(items) == 0 {
 		lines = append(lines, MutedStyle.Render("empty"))
 	}
-	for i, t := range items {
-		if i > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, m.renderCard(idx, i, t, width))
-	}
+	lines = append(lines, m.renderCardWindow(idx, items, width)...)
 
 	style := ColumnStyle
 	if idx == m.col {
@@ -147,6 +146,81 @@ func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 	}
 	return style.Width(width).Height(m.columnHeight()).
 		Render(strings.Join(lines, "\n"))
+}
+
+// renderCardWindow renders as many cards as fit within the column's height
+// (lipgloss.Style.Height only pads, it does not clip), separated by a blank
+// line. When some cards do not fit it emits a trailing "+N more" line, and
+// scrolls the window down so the currently selected card is always shown
+// rather than clipped away.
+func (m BoardModel) renderCardWindow(idx int, items []task.Task, width int) []string {
+	avail := m.columnHeight() - 2 // header + blank line already emitted
+	if avail < 1 {
+		avail = 1
+	}
+
+	sel := -1
+	if idx == m.col {
+		sel = m.sel[m.col]
+	}
+
+	rendered := make([]string, len(items))
+	heights := make([]int, len(items))
+	for i, t := range items {
+		rendered[i] = m.renderCard(idx, i, t, width)
+		heights[i] = strings.Count(rendered[i], "\n") + 1
+	}
+
+	// windowRows is the row count of [start,end), including the blank
+	// separator before every card after the first in the window.
+	windowRows := func(start, end int) int {
+		rows := 0
+		for i := start; i < end; i++ {
+			if i > start {
+				rows++
+			}
+			rows += heights[i]
+		}
+		return rows
+	}
+
+	// fit grows end greedily from start while the window still fits in avail.
+	fit := func(start int) int {
+		end := start
+		for end < len(items) && windowRows(start, end+1) <= avail {
+			end++
+		}
+		return end
+	}
+
+	start := 0
+	end := fit(start)
+	// Scroll down until the selected card is inside the window.
+	for sel >= end && start < len(items)-1 {
+		start++
+		end = fit(start)
+	}
+
+	more := len(items) - end
+	if more > 0 {
+		// Reserve one row for the "+N more" line.
+		for end > start && windowRows(start, end)+1 > avail {
+			end--
+		}
+		more = len(items) - end
+	}
+
+	var lines []string
+	for i := start; i < end; i++ {
+		if i > start {
+			lines = append(lines, "")
+		}
+		lines = append(lines, rendered[i])
+	}
+	if more > 0 {
+		lines = append(lines, MutedStyle.Render(fmt.Sprintf("+%d more", more)))
+	}
+	return lines
 }
 
 // renderCard draws one card: title, optional description, optional deadline.
@@ -200,18 +274,23 @@ func (m BoardModel) renderFooter() string {
 		"focus: " + focusLabel + " (ctrl+t) · hjkl move · a add · e edit · d delete · m grab · tab analytics · ? help · q quit")
 }
 
+// truncate shortens s to fit n display columns, appending an ellipsis when
+// it has to cut. It measures with lipgloss.Width, not rune count: CJK and
+// emoji occupy two columns each, so a rune budget silently overflows.
+// ponytail: O(n^2) shrink loop on short strings (card titles/descriptions);
+// fine at this size, revisit if it ever runs on long text.
 func truncate(s string, n int) string {
 	if n < 1 {
 		n = 1
 	}
-	r := []rune(s)
-	if len(r) <= n {
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	if n <= 1 {
-		return "…"
+	r := []rune(s)
+	for len(r) > 0 && lipgloss.Width(string(r)+"…") > n {
+		r = r[:len(r)-1]
 	}
-	return string(r[:n-1]) + "…"
+	return string(r) + "…"
 }
 
 // Update dispatches on the current mode: modeInput handles add/edit text
