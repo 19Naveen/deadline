@@ -140,6 +140,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `e` | edit the selected task |
 | `d` | delete it, after a `y`/`n` confirm |
 | `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
+| `ctrl+d` | open the calendar (Deadline field only) |
 | `h` `l` | previous / next column |
 | `j` `k` | previous / next task |
 | `g` `G` | first / last task in the column |
@@ -151,6 +152,10 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 Adding and editing open the same three-field form. `tab` and `shift+tab` move between Title, Description and Deadline. `enter` saves from any field, `esc` throws it away.
 
 Dates go in as `DD/MM/YYYY`. A date it cannot read keeps the form open and tells you the format, rather than quietly dropping what you typed.
+
+Or do not type them at all. With the cursor in the Deadline field, `ctrl+d`
+opens a small calendar: `hjkl` moves a day or a week, `[` and `]` change
+month, `t` jumps to today, `enter` picks, `x` clears the date, `esc` closes.
 
 ---
 

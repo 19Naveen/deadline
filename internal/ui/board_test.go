@@ -906,3 +906,174 @@ func TestFormEscCancels(t *testing.T) {
 		t.Errorf("Tasks = %d, want 0 after cancel", len(m.board.Tasks))
 	}
 }
+
+func TestCtrlDOpensThePickerOnlyOnTheDeadlineField(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if m.picker.open {
+		t.Error("picker opened from the Title field, want it to stay closed")
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab}) // now on Deadline
+	if m.field != fieldDeadline {
+		t.Fatalf("field = %d, want fieldDeadline", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if !m.picker.open {
+		t.Error("picker did not open on the Deadline field")
+	}
+}
+
+func TestPickerOpensOnTodayWhenTheFieldIsEmpty(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+
+	if !sameDay(m.picker.cursor, ref) {
+		t.Errorf("cursor = %v, want today (%v)", m.picker.cursor, ref)
+	}
+}
+
+func TestPickerOpensOnTheDateAlreadyTyped(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m.inputs[fieldDeadline].SetValue("09/08/2026")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+
+	if m.picker.cursor.Day() != 9 || m.picker.cursor.Month() != time.August {
+		t.Errorf("cursor = %v, want 09/08/2026 from the field", m.picker.cursor)
+	}
+}
+
+func TestPickerEnterWritesTheDateAndCloses(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+
+	// ref is 30/07/2026; two days forward is 01/08/2026.
+	m, _ = m.Update(key("l"))
+	m, _ = m.Update(key("l"))
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.picker.open {
+		t.Error("picker still open after enter")
+	}
+	if got := m.inputs[fieldDeadline].Value(); got != "01/08/2026" {
+		t.Errorf("deadline field = %q, want %q", got, "01/08/2026")
+	}
+	if m.mode != modeInput {
+		t.Errorf("mode = %v, want modeInput — enter picks a date, it must not save the task", m.mode)
+	}
+	if len(m.board.Tasks) != 0 {
+		t.Errorf("Tasks = %d, want 0 — enter in the picker must not save", len(m.board.Tasks))
+	}
+}
+
+func TestPickerEscClosesAndChangesNothing(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m.inputs[fieldDeadline].SetValue("09/08/2026")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m, _ = m.Update(key("l"))
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.picker.open {
+		t.Error("picker still open after esc")
+	}
+	if got := m.inputs[fieldDeadline].Value(); got != "09/08/2026" {
+		t.Errorf("deadline field = %q, want it untouched", got)
+	}
+	if m.mode != modeInput {
+		t.Errorf("mode = %v, want modeInput — esc closes the picker, not the form", m.mode)
+	}
+}
+
+func TestPickerXClearsTheField(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m.inputs[fieldDeadline].SetValue("09/08/2026")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m, _ = m.Update(key("x"))
+
+	if m.picker.open {
+		t.Error("picker still open after x")
+	}
+	if got := m.inputs[fieldDeadline].Value(); got != "" {
+		t.Errorf("deadline field = %q, want empty after clearing", got)
+	}
+}
+
+func TestPickerNavigationKeys(t *testing.T) {
+	// ref is Thursday 30/07/2026.
+	cases := []struct {
+		keys  []string
+		want  time.Time
+		label string
+	}{
+		{[]string{"l"}, time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), "l is one day forward"},
+		{[]string{"h"}, time.Date(2026, time.July, 29, 0, 0, 0, 0, time.UTC), "h is one day back"},
+		{[]string{"j"}, time.Date(2026, time.August, 6, 0, 0, 0, 0, time.UTC), "j is one week forward"},
+		{[]string{"k"}, time.Date(2026, time.July, 23, 0, 0, 0, 0, time.UTC), "k is one week back"},
+		{[]string{"]"}, time.Date(2026, time.August, 30, 0, 0, 0, 0, time.UTC), "] is one month forward"},
+		{[]string{"["}, time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC), "[ is one month back"},
+		{[]string{"]", "t"}, time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC), "t returns to today"},
+	}
+	for _, c := range cases {
+		m := fixedClock(NewBoardModel(&task.Board{}))
+		m = press(m, "a")
+		m.field = fieldDeadline
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+		for _, k := range c.keys {
+			m, _ = m.Update(key(k))
+		}
+		if !sameDay(m.picker.cursor, c.want) {
+			t.Errorf("%s: cursor = %v, want %v", c.label, m.picker.cursor, c.want)
+		}
+	}
+}
+
+func TestPickerAppearsInTheFormView(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m.SetSize(120, 40)
+	m = press(m, "a")
+	m.field = fieldDeadline
+
+	before := stripANSI(m.View())
+	if strings.Contains(before, "Mo Tu We Th Fr Sa Su") {
+		t.Error("the calendar is visible before ctrl+d")
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	after := stripANSI(m.View())
+	if !strings.Contains(after, "Mo Tu We Th Fr Sa Su") {
+		t.Errorf("the calendar did not appear after ctrl+d:\n%s", after)
+	}
+	if !strings.Contains(after, "July 2026") {
+		t.Errorf("the calendar is not showing the current month:\n%s", after)
+	}
+}
+
+func TestClosingTheFormAlsoClosesThePicker(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "a")
+	m.field = fieldDeadline
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // closes the picker
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc}) // closes the form
+
+	if m.mode != modeNormal {
+		t.Fatalf("mode = %v, want modeNormal", m.mode)
+	}
+	m = press(m, "a")
+	if m.picker.open {
+		t.Error("the picker is open on a freshly opened form")
+	}
+}
