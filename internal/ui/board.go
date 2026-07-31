@@ -56,9 +56,10 @@ type BoardModel struct {
 
 	now func() time.Time // injectable clock; tests pin it
 
-	width  int
-	height int
-	err    string
+	width      int
+	height     int
+	err        string
+	footerRows int // height of the last-rendered footer; set by View, read by columnHeight
 }
 
 // NewBoardModel wires a board into a fresh page model.
@@ -137,7 +138,7 @@ func (m BoardModel) minBoardWidth() int {
 }
 
 func (m BoardModel) columnHeight() int {
-	h := m.height - 6 // header + footer + borders
+	h := m.height - 5 - m.footerRows // tab bar + borders + the actual footer
 	if h < 5 {
 		h = 5
 	}
@@ -148,19 +149,29 @@ func (m BoardModel) columnHeight() int {
 // minBoardWidth the columns would overflow and wrap into a scrambled mess,
 // so it renders a short warning instead. m.width == 0 (before the first
 // WindowSizeMsg) falls through to the normal path, which defaults to 80.
+//
+// The footer is measured before the columns are laid out: in modeInput the
+// footer is the whole bordered form panel (and grows further when the date
+// picker is open), not the fixed one-line hint of normal mode. columnHeight
+// needs that real height, not a hard-coded guess, or the calendar pushes the
+// board off the top of the screen. m has a value receiver, so the recorded
+// height is stashed on this local copy before it is used below.
 func (m BoardModel) View() string {
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		return MutedStyle.Render(fmt.Sprintf(
 			"terminal too narrow\n\ngotodo needs at least %d columns for the four-column board.\nThis terminal is %d. Widen it, or press tab for Analytics or Archive.",
 			need, m.width))
 	}
+	footer := m.renderFooter()
+	m.footerRows = lipgloss.Height(footer)
+
 	cw := m.columnWidth()
 	cols := make([]string, 0, len(task.Statuses))
 	for i, s := range task.Statuses {
 		cols = append(cols, m.renderColumn(i, s, cw))
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
-	return lipgloss.JoinVertical(lipgloss.Left, body, m.renderFooter())
+	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
 
 func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {

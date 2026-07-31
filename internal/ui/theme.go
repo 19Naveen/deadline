@@ -135,7 +135,11 @@ func RenderDeadline(t task.Task, now time.Time) string {
 		return ""
 	}
 	u := task.DeadlineUrgency(t, now)
-	line := "● " + FormatDate(*t.Deadline)
+	// Format in now's zone, the same zone DeadlineUrgency re-anchors the
+	// deadline to before taking its calendar day. Formatting the raw
+	// stored zone instead can render a date that disagrees with the
+	// urgency bucket computed for it, across a timezone change.
+	line := "● " + FormatDate(t.Deadline.In(now.Location()))
 	if u == task.UrgencyOverdue {
 		line += " ✗"
 	}

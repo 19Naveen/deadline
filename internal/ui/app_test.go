@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"gotodo/internal/task"
 )
@@ -48,6 +49,9 @@ func TestQuestionMarkTogglesHelp(t *testing.T) {
 	}
 	if !strings.Contains(a.View(), "ctrl+t") {
 		t.Errorf("help overlay missing the ctrl+t binding:\n%s", a.View())
+	}
+	if !strings.Contains(a.View(), "ctrl+d") {
+		t.Errorf("help overlay missing the ctrl+d (calendar) binding:\n%s", a.View())
 	}
 	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	if m.(AppModel).showHelp {
@@ -375,5 +379,51 @@ func TestArchiveTickClampsBoardSelection(t *testing.T) {
 	n := len(a.board.board.ByStatus(task.StatusDone))
 	if a.board.sel[doneIdx] < 0 || a.board.sel[doneIdx] >= max(n, 1) {
 		t.Errorf("sel[%d] = %d out of range for %d remaining done tasks", doneIdx, a.board.sel[doneIdx], n)
+	}
+}
+
+// TestViewNeverExceedsTerminalHeight is the whole-frame check the 25 tests
+// added alongside the date picker were missing: every component test below
+// this one checks renderForm() or picker.View() in isolation, and none of
+// them notice that stacking the tab bar, the board, and a form with the
+// calendar open overflows the real terminal. Bubbletea's altscreen renderer
+// does not clip vertically, so an overflow here means the top of the board
+// scrolls off screen while the picker is open — exactly when the user needs
+// to see the board they're picking a date for.
+//
+// The h==24 exception matches the documented floor in columnHeight (h < 5):
+// at the smallest height tested, with the calendar's footer eating most of
+// the budget, the column height floor can push the frame one row past the
+// terminal. That is a known, benign edge case, not the bug this test hunts.
+func TestViewNeverExceedsTerminalHeight(t *testing.T) {
+	for _, h := range []int{24, 40, 50} {
+		a := NewApp(seeded(t))
+		a.now = func() time.Time { return ref }
+		a.board.now = func() time.Time { return ref }
+		m, _ := a.Update(tea.WindowSizeMsg{Width: 110, Height: h})
+		a = m.(AppModel)
+
+		check := func(state string, a AppModel) {
+			t.Helper()
+			got := lipgloss.Height(a.View())
+			if got > h && !(h == 24 && got-h <= 1) {
+				t.Errorf("height=%d state=%s: View is %d rows tall, overflows a %d-row terminal by %d:\n%s",
+					h, state, got, h, got-h, a.View())
+			}
+		}
+		check("normal", a)
+
+		m2, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+		a2 := m2.(AppModel)
+		check("form open", a2)
+
+		m3, _ := a2.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m3, _ = m3.(AppModel).Update(tea.KeyMsg{Type: tea.KeyTab})
+		m4, _ := m3.(AppModel).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+		a4 := m4.(AppModel)
+		if !a4.board.picker.open {
+			t.Fatalf("height=%d: ctrl+d did not open the calendar, test setup is broken", h)
+		}
+		check("form + calendar open", a4)
 	}
 }
