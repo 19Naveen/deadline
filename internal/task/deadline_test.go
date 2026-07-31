@@ -23,6 +23,8 @@ func TestDaysUntilDeadline(t *testing.T) {
 		{"in three days", ref.AddDate(0, 0, 3), 3},
 		{"yesterday", ref.AddDate(0, 0, -1), -1},
 		{"a week ago", ref.AddDate(0, 0, -7), -7},
+		{"tomorrow at 09:00", time.Date(2026, 7, 31, 9, 0, 0, 0, time.UTC), 1},
+		{"tomorrow at 23:00", time.Date(2026, 7, 31, 23, 0, 0, 0, time.UTC), 1},
 	}
 	for _, c := range cases {
 		got, ok := DaysUntilDeadline(due(c.day), ref)
@@ -39,6 +41,22 @@ func TestDaysUntilDeadline(t *testing.T) {
 func TestDaysUntilDeadlineNoDeadline(t *testing.T) {
 	if _, ok := DaysUntilDeadline(Task{Status: StatusTodo}, ref); ok {
 		t.Error("ok = true for a task with no deadline, want false")
+	}
+}
+
+func TestDaysUntilDeadlineAcrossDSTTransition(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("tzdata unavailable")
+	}
+	now := time.Date(2026, 3, 8, 0, 0, 0, 0, loc)
+	deadline := time.Date(2026, 3, 10, 0, 0, 0, 0, loc)
+	got, ok := DaysUntilDeadline(due(deadline), now)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if got != 2 {
+		t.Errorf("days = %d, want 2", got)
 	}
 }
 

@@ -27,6 +27,18 @@ func StartOfDay(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+// daysBetween counts whole calendar days from one midnight to another.
+// Both are re-anchored to noon UTC first: UTC has no DST, and noon leaves
+// twelve hours of slack, so a 23- or 25-hour calendar day cannot round the
+// result off by one the way dividing an elapsed duration by 24 hours does.
+func daysBetween(from, to time.Time) int {
+	y1, m1, d1 := from.Date()
+	y2, m2, d2 := to.Date()
+	a := time.Date(y1, m1, d1, 12, 0, 0, 0, time.UTC)
+	b := time.Date(y2, m2, d2, 12, 0, 0, 0, time.UTC)
+	return int(b.Sub(a).Hours() / 24)
+}
+
 // DaysUntilDeadline is the number of whole calendar days from now's day to
 // the deadline's day: 0 means today, 1 tomorrow, negative means past. ok is
 // false when the task has no deadline.
@@ -36,7 +48,7 @@ func DaysUntilDeadline(t Task, now time.Time) (int, bool) {
 	}
 	from := StartOfDay(now)
 	to := StartOfDay(t.Deadline.In(now.Location()))
-	return int(to.Sub(from).Hours() / 24), true
+	return daysBetween(from, to), true
 }
 
 // DeadlineUrgency buckets a task's deadline for display. A completed task
