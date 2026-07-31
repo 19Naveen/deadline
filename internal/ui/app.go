@@ -191,7 +191,7 @@ func (m AppModel) renderHelp() string {
 		{"a", "add a task"},
 		{"e", "edit the selected task"},
 		{"d", "delete the selected task (confirms)"},
-		{"ctrl+d", "open the calendar (in the deadline field)"},
+		{"deadline", "a calendar opens with the field; hjkl to move, t for today"},
 		{"m", "grab the task, then h/l to move, enter to drop, esc to cancel"},
 		{"?", "toggle this help"},
 		{"q", "quit"},

@@ -41,23 +41,6 @@ func (p datePicker) move(days int) datePicker {
 	return p
 }
 
-// addMonths shifts the cursor by whole months, clamping the day to the end
-// of the target month. Go's AddDate normalises instead of clamping — it
-// turns 31 January plus one month into 3 March — which is never what a
-// calendar should do.
-func (p datePicker) addMonths(n int) datePicker {
-	y, m, d := p.cursor.Date()
-	loc := p.cursor.Location()
-	// Stepping from the 1st avoids the same overflow while we find the
-	// month; noon keeps that anchor safe from a DST transition too.
-	target := time.Date(y, m, 1, 12, 0, 0, 0, loc).AddDate(0, n, 0)
-	if last := daysInMonth(target.Year(), target.Month()); d > last {
-		d = last
-	}
-	p.cursor = time.Date(target.Year(), target.Month(), d, 12, 0, 0, 0, loc)
-	return p
-}
-
 // sameDay reports whether a and b fall on the same calendar day in their
 // own locations, ignoring time of day.
 func sameDay(a, b time.Time) bool {
@@ -89,15 +72,18 @@ func monthGrid(cursor time.Time) [6][7]time.Time {
 	return g
 }
 
-// pickerWidth is the rendered width: seven cells of three columns each.
-const pickerWidth = 21
+// pickerWidth is the rendered width: seven cells of four columns each.
+const pickerWidth = 28
 
 // View renders the month as a Monday-first grid. today is passed in rather
 // than read from the clock so tests stay deterministic.
 //
-// Every cell is exactly three columns — one marker slot plus the day right
-// aligned in two — so the cursor marker can never shift a row out of line
+// Every cell is exactly four columns, so the brackets around the selected
+// day occupy space the cell already owns and cannot shift a row out of line
 // with the header. Rows are padded, not trimmed, for the same reason.
+//
+// The two markers are independent and can land on the same cell: today is
+// always green, and the selected day is always bracketed.
 func (p datePicker) View(today time.Time) string {
 	title := p.cursor.Format("January 2006")
 	pad := (pickerWidth - len(title)) / 2
@@ -107,7 +93,7 @@ func (p datePicker) View(today time.Time) string {
 
 	rows := []string{
 		strings.Repeat(" ", pad) + TitleStyle.Render(title),
-		MutedStyle.Render(" Mo Tu We Th Fr Sa Su"),
+		MutedStyle.Render(" Mo  Tu  We  Th  Fr  Sa  Su "),
 	}
 
 	for _, week := range monthGrid(p.cursor) {
@@ -115,21 +101,27 @@ func (p datePicker) View(today time.Time) string {
 		blank := true
 		for _, cell := range week {
 			if cell.IsZero() {
-				b.WriteString("   ")
+				b.WriteString("    ")
 				continue
 			}
 			blank = false
-			day := fmt.Sprintf("%2d", cell.Day())
-			switch {
-			case sameDay(cell, p.cursor):
-				b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColAccent).
-					Render(">" + day))
-			case sameDay(cell, today):
-				b.WriteString(" " + lipgloss.NewStyle().
-					Foreground(AccentFor(task.StatusDone)).Render(day))
-			default:
-				b.WriteString(" " + day)
+
+			text := fmt.Sprintf(" %2d ", cell.Day())
+			if sameDay(cell, p.cursor) {
+				text = fmt.Sprintf("[%2d]", cell.Day())
 			}
+
+			style := lipgloss.NewStyle()
+			switch {
+			case sameDay(cell, today):
+				style = style.Foreground(AccentFor(task.StatusDone))
+			case sameDay(cell, p.cursor):
+				style = style.Foreground(ColAccent)
+			}
+			if sameDay(cell, p.cursor) {
+				style = style.Bold(true)
+			}
+			b.WriteString(style.Render(text))
 		}
 		if blank {
 			continue // a wholly empty trailing week

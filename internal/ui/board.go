@@ -385,6 +385,7 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
 		m.inputs[i].Blur()
 	}
 	m.inputs[fieldTitle].Focus()
+	m.picker = datePicker{}
 }
 
 // closeForm returns to normal mode and drops focus from every field.
@@ -404,6 +405,11 @@ func (m *BoardModel) focusField(delta int) {
 	m.field = (m.field + delta + len(m.inputs)) % len(m.inputs)
 	m.inputs[m.field].Focus()
 	m.inputs[m.field].CursorEnd()
+	if m.field == fieldDeadline {
+		m.seedPicker()
+	} else {
+		m.picker = datePicker{}
+	}
 }
 
 // renderForm draws the three-field entry panel shown at the bottom.
@@ -428,16 +434,10 @@ func (m BoardModel) renderForm() string {
 			Render("! "+m.err))
 	}
 	if m.picker.open {
-		rows = append(rows, "", m.picker.View(m.now()))
-		rows = append(rows, MutedStyle.Render(
-			"hjkl day/week · [ ] month · t today · enter pick · x clear · esc close"))
-	} else {
-		hint := "tab/shift+tab field · enter save · esc cancel"
-		if m.field == fieldDeadline {
-			hint = "ctrl+d calendar · " + hint
-		}
-		rows = append(rows, MutedStyle.Render(hint))
+		rows = append(rows, "", m.picker.View(m.now()), "",
+			MutedStyle.Render("hjkl day/week · t today · or type the date"))
 	}
+	rows = append(rows, MutedStyle.Render("tab/shift+tab field · enter save · esc cancel"))
 	return ColumnStyle.Render(strings.Join(rows, "\n"))
 }
 
@@ -566,12 +566,6 @@ type dirtyMsg struct{}
 func dirty() tea.Cmd { return func() tea.Msg { return dirtyMsg{} } }
 
 func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
-	// While the calendar is up it owns every key — otherwise enter would
-	// save the task instead of picking a date.
-	if m.picker.open {
-		return m.updatePicker(k)
-	}
-
 	switch k.Type {
 	case tea.KeyEsc:
 		m.closeForm()
@@ -583,18 +577,6 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 
 	case tea.KeyShiftTab:
 		m.focusField(-1)
-		return m, nil
-
-	case tea.KeyCtrlD:
-		if m.field != fieldDeadline {
-			return m, nil
-		}
-		seed := m.now()
-		if d, err := parseDeadline(m.inputs[fieldDeadline].Value()); err == nil && d != nil {
-			seed = *d
-		}
-		m.picker = newDatePicker(seed)
-		m.err = ""
 		return m, nil
 
 	case tea.KeyEnter:
@@ -625,59 +607,55 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		return m, dirty()
 	}
 
+	// On the Deadline field the calendar is always on screen, so hjkl and t
+	// steer it. Those letters are never legitimate input in a DD/MM/YYYY
+	// field, which is what lets the calendar and the text box share the
+	// keyboard without the calendar having to swallow everything.
+	if m.field == fieldDeadline {
+		moved := true
+		switch k.String() {
+		case "h":
+			m.picker = m.picker.move(-1)
+		case "l":
+			m.picker = m.picker.move(1)
+		case "k":
+			m.picker = m.picker.move(-7)
+		case "j":
+			m.picker = m.picker.move(7)
+		case "t":
+			m.picker = newDatePicker(m.now())
+		default:
+			moved = false
+		}
+		if moved {
+			m.inputs[fieldDeadline].SetValue(FormatDate(m.picker.cursor))
+			m.inputs[fieldDeadline].CursorEnd()
+			m.err = ""
+			return m, nil
+		}
+	}
+
 	var cmd tea.Cmd
 	m.inputs[m.field], cmd = m.inputs[m.field].Update(k)
+
+	// Typing wins over the cursor: once the text parses, the calendar jumps
+	// to it. A half-typed date leaves the cursor where it was.
+	if m.field == fieldDeadline {
+		m.seedPicker()
+	}
 	return m, cmd
 }
 
-// updatePicker handles keys while the deadline calendar is open. It never
-// saves the task: enter picks a date and hands control back to the form.
-func (m BoardModel) updatePicker(k tea.KeyMsg) (BoardModel, tea.Cmd) {
-	switch k.Type {
-	case tea.KeyEsc:
-		m.picker = datePicker{}
-		return m, nil
-
-	case tea.KeyEnter:
-		m.inputs[fieldDeadline].SetValue(FormatDate(m.picker.cursor))
-		m.inputs[fieldDeadline].CursorEnd()
-		m.picker = datePicker{}
-		return m, nil
-
-	case tea.KeyLeft:
-		m.picker = m.picker.move(-1)
-		return m, nil
-	case tea.KeyRight:
-		m.picker = m.picker.move(1)
-		return m, nil
-	case tea.KeyUp:
-		m.picker = m.picker.move(-7)
-		return m, nil
-	case tea.KeyDown:
-		m.picker = m.picker.move(7)
-		return m, nil
+// seedPicker points the calendar at the date currently typed in the Deadline
+// field, or at today when that field is blank or not yet a valid date.
+func (m *BoardModel) seedPicker() {
+	seed := m.now()
+	if d, err := parseDeadline(m.inputs[fieldDeadline].Value()); err == nil && d != nil {
+		seed = *d
+	} else if m.picker.open {
+		return // mid-typing: leave the cursor alone rather than snapping to today
 	}
-
-	switch k.String() {
-	case "h":
-		m.picker = m.picker.move(-1)
-	case "l":
-		m.picker = m.picker.move(1)
-	case "k":
-		m.picker = m.picker.move(-7)
-	case "j":
-		m.picker = m.picker.move(7)
-	case "[":
-		m.picker = m.picker.addMonths(-1)
-	case "]":
-		m.picker = m.picker.addMonths(1)
-	case "t":
-		m.picker = newDatePicker(m.now())
-	case "x":
-		m.inputs[fieldDeadline].SetValue("")
-		m.picker = datePicker{}
-	}
-	return m, nil
+	m.picker = newDatePicker(seed)
 }
 
 func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {

@@ -39,7 +39,7 @@ func TestDatePickerCursorIsAlwaysHeldAtNoon(t *testing.T) {
 	}
 	checkNoon(t, "newDatePicker", newDatePicker(time.Date(2026, time.August, 9, 17, 45, 3, 0, time.UTC)).cursor)
 	checkNoon(t, "move", newDatePicker(day(2026, time.August, 9)).move(3).cursor)
-	checkNoon(t, "addMonths", newDatePicker(day(2026, time.August, 9)).addMonths(1).cursor)
+	checkNoon(t, "move across a month", newDatePicker(day(2026, time.August, 31)).move(1).cursor)
 }
 
 func TestMoveByDaysCrossesMonthAndYearBoundaries(t *testing.T) {
@@ -60,30 +60,6 @@ func TestMoveByDaysCrossesMonthAndYearBoundaries(t *testing.T) {
 		got := datePicker{cursor: c.from, open: true}.move(c.by).cursor
 		if !sameDay(got, c.want) {
 			t.Errorf("%s: move(%d) = %v, want %v", c.name, c.by, got, c.want)
-		}
-	}
-}
-
-func TestAddMonthsClampsToTheLastDayOfTheTargetMonth(t *testing.T) {
-	cases := []struct {
-		name string
-		from time.Time
-		by   int
-		want time.Time
-	}{
-		// Go's AddDate would give 03/03 here. Clamping is the whole point.
-		{"31 Jan forward one month", day(2026, time.January, 31), 1, day(2026, time.February, 28)},
-		{"31 Mar back one month", day(2026, time.March, 31), -1, day(2026, time.February, 28)},
-		{"31 Aug forward one month", day(2026, time.August, 31), 1, day(2026, time.September, 30)},
-		{"leap year February", day(2024, time.January, 31), 1, day(2024, time.February, 29)},
-		{"ordinary month keeps its day", day(2026, time.August, 9), 1, day(2026, time.September, 9)},
-		{"across the year end", day(2026, time.December, 15), 1, day(2027, time.January, 15)},
-		{"across the year start", day(2026, time.January, 15), -1, day(2025, time.December, 15)},
-	}
-	for _, c := range cases {
-		got := datePicker{cursor: c.from, open: true}.addMonths(c.by).cursor
-		if !sameDay(got, c.want) {
-			t.Errorf("%s: addMonths(%d) = %v, want %v", c.name, c.by, got, c.want)
 		}
 	}
 }
@@ -205,22 +181,22 @@ func TestPickerViewShowsMonthYearAndWeekdayHeader(t *testing.T) {
 	if !strings.Contains(out, "August 2026") {
 		t.Errorf("View missing the month heading:\n%s", out)
 	}
-	if !strings.Contains(out, "Mo Tu We Th Fr Sa Su") {
+	if !strings.Contains(out, "Mo  Tu  We  Th  Fr  Sa  Su") {
 		t.Errorf("View missing the Monday-first weekday header:\n%s", out)
 	}
 }
 
 func TestPickerViewMarksTheCursor(t *testing.T) {
 	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 1)))
-	if !strings.Contains(out, "> 9") {
-		t.Errorf("View does not mark the cursor day:\n%s", out)
+	if !strings.Contains(out, "[ 9]") {
+		t.Errorf("View does not bracket the selected day:\n%s", out)
 	}
 }
 
 func TestPickerViewHasOneCursorOnly(t *testing.T) {
 	out := stripANSI(newDatePicker(day(2026, time.August, 9)).View(day(2026, time.August, 1)))
-	if got := strings.Count(out, ">"); got != 1 {
-		t.Errorf("View marks %d days, want exactly 1:\n%s", got, out)
+	if got := strings.Count(out, "["); got != 1 {
+		t.Errorf("View brackets %d days, want exactly 1:\n%s", got, out)
 	}
 }
 
@@ -251,12 +227,12 @@ func TestPickerViewShowsEveryDayOfTheMonth(t *testing.T) {
 	}
 }
 
-func TestPickerViewFitsTwentyOneColumns(t *testing.T) {
+func TestPickerViewFitsItsDeclaredWidth(t *testing.T) {
 	// February 2026 starts on a Sunday — the widest leading-blank case.
 	out := newDatePicker(day(2026, time.February, 1)).View(day(2026, time.February, 1))
 	for _, line := range strings.Split(out, "\n") {
-		if w := lipgloss.Width(line); w > 21 {
-			t.Errorf("line is %d columns, want at most 21: %q", w, stripANSI(line))
+		if w := lipgloss.Width(line); w > pickerWidth {
+			t.Errorf("line is %d columns, want at most %d: %q", w, pickerWidth, stripANSI(line))
 		}
 	}
 }

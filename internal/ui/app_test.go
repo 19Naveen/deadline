@@ -50,8 +50,8 @@ func TestQuestionMarkTogglesHelp(t *testing.T) {
 	if !strings.Contains(a.View(), "ctrl+t") {
 		t.Errorf("help overlay missing the ctrl+t binding:\n%s", a.View())
 	}
-	if !strings.Contains(a.View(), "ctrl+d") {
-		t.Errorf("help overlay missing the ctrl+d (calendar) binding:\n%s", a.View())
+	if !strings.Contains(a.View(), "calendar") {
+		t.Errorf("help overlay does not mention the deadline calendar:\n%s", a.View())
 	}
 	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	if m.(AppModel).showHelp {

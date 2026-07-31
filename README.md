@@ -140,7 +140,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `e` | edit the selected task |
 | `d` | delete it, after a `y`/`n` confirm |
 | `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
-| `ctrl+d` | open the calendar (Deadline field only) |
 | `h` `l` | previous / next column |
 | `j` `k` | previous / next task |
 | `g` `G` | first / last task in the column |
@@ -153,9 +152,14 @@ Adding and editing open the same three-field form. `tab` and `shift+tab` move be
 
 Dates go in as `DD/MM/YYYY`. A date it cannot read keeps the form open and tells you the format, rather than quietly dropping what you typed.
 
-Or do not type them at all. With the cursor in the Deadline field, `ctrl+d`
-opens a small calendar: `hjkl` moves a day or a week, `[` and `]` change
-month, `t` jumps to today, `enter` picks, `x` clears the date, `esc` closes.
+Or do not type them at all. Tab to the Deadline field and a calendar is
+already there. `hjkl` moves a day or a week and fills the field as you go,
+`t` jumps back to today. Today is green; the selected day is bracketed.
+
+The calendar and the text box share the keyboard rather than fighting over
+it — `hjkl` steer the calendar because those letters are never part of a
+date, while digits and `backspace` go to the field and the calendar follows
+along. `tab` and `enter` behave exactly as they do on the other two fields.
 
 ---
 
