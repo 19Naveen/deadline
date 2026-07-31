@@ -87,6 +87,18 @@ func (m *BoardModel) clampSelection() {
 	}
 }
 
+const (
+	// minColumnWidth is the floor set by the widest deadline line
+	// ("● DD/MM/YYYY ✗", 14 columns) plus the card's own border and padding.
+	// Do not lower this without re-checking
+	// TestCardDeadlineFitsAtMinimumColumnWidth.
+	minColumnWidth = 18
+	// columnChrome is how much wider than its content each rendered column
+	// is: ColumnStyle's one-column border plus one-column padding, on each
+	// side that columnWidth's "w/n - columnChrome" already subtracts for.
+	columnChrome = 2
+)
+
 // columnWidth splits the terminal evenly across the four columns, leaving
 // room for each column's border and padding.
 func (m BoardModel) columnWidth() int {
@@ -94,14 +106,17 @@ func (m BoardModel) columnWidth() int {
 	if w <= 0 {
 		w = 80
 	}
-	per := w/len(task.Statuses) - 2
-	// 18 is the floor set by the widest deadline line ("● DD/MM/YYYY ✗", 14
-	// columns) plus the card's own border and padding. Do not lower this
-	// without re-checking TestCardDeadlineFitsAtMinimumColumnWidth.
-	if per < 18 {
-		per = 18
+	per := w/len(task.Statuses) - columnChrome
+	if per < minColumnWidth {
+		per = minColumnWidth
 	}
 	return per
+}
+
+// minBoardWidth is the narrowest terminal that can show all four columns at
+// minColumnWidth without wrapping. View falls back to a warning below this.
+func (m BoardModel) minBoardWidth() int {
+	return len(task.Statuses) * (minColumnWidth + columnChrome)
 }
 
 func (m BoardModel) columnHeight() int {
@@ -112,8 +127,16 @@ func (m BoardModel) columnHeight() int {
 	return h
 }
 
-// View renders the four columns side by side plus the footer line.
+// View renders the four columns side by side plus the footer line. Below
+// minBoardWidth the columns would overflow and wrap into a scrambled mess,
+// so it renders a short warning instead. m.width == 0 (before the first
+// WindowSizeMsg) falls through to the normal path, which defaults to 80.
 func (m BoardModel) View() string {
+	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
+		return MutedStyle.Render(fmt.Sprintf(
+			"terminal too narrow\n\ngotodo needs at least %d columns for the four-column board.\nThis terminal is %d. Widen it, or press tab for Analytics.",
+			need, m.width))
+	}
 	cw := m.columnWidth()
 	cols := make([]string, 0, len(task.Statuses))
 	for i, s := range task.Statuses {

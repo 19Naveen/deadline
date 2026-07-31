@@ -599,3 +599,72 @@ func TestColumnKeepsSelectedCardVisibleBeyondFold(t *testing.T) {
 		t.Errorf("selected last card should still be rendered:\n%s", out)
 	}
 }
+
+func TestViewFitsWithinTerminalWidth(t *testing.T) {
+	m := NewBoardModel(seeded(t))
+	m.SetSize(160, 40)
+	out := stripANSI(m.View())
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > 160 {
+			t.Errorf("line is %d columns wide, wider than the 160-wide terminal: %q", got, line)
+		}
+	}
+}
+
+func TestViewRendersColumnsAtComfortableWidth(t *testing.T) {
+	m := NewBoardModel(seeded(t))
+	m.SetSize(160, 40)
+	out := m.View()
+	for _, s := range task.Statuses {
+		if !strings.Contains(out, s.Label()) {
+			t.Errorf("View missing header %q at a comfortable width", s.Label())
+		}
+	}
+	if strings.Contains(out, "too narrow") {
+		t.Errorf("View should not warn at a comfortable width:\n%s", out)
+	}
+}
+
+func TestViewWarnsWhenTerminalTooNarrow(t *testing.T) {
+	for _, w := range []int{60, 72} {
+		m := NewBoardModel(seeded(t))
+		m.SetSize(w, 40)
+		out := m.View()
+		if !strings.Contains(out, "too narrow") {
+			t.Errorf("width=%d: View should warn that the terminal is too narrow:\n%s", w, out)
+		}
+		for _, s := range task.Statuses {
+			if strings.Contains(out, s.Label()) {
+				t.Errorf("width=%d: View should not render the four-column layout while too narrow", w)
+			}
+		}
+	}
+}
+
+func TestViewRendersNormallyAtTheWidthThreshold(t *testing.T) {
+	m := NewBoardModel(seeded(t))
+	need := m.minBoardWidth()
+	m.SetSize(need, 40)
+	out := m.View()
+	if strings.Contains(out, "too narrow") {
+		t.Errorf("width=%d (exactly minBoardWidth): should not warn, an off-by-one snuck in:\n%s", need, out)
+	}
+	for _, s := range task.Statuses {
+		if !strings.Contains(out, s.Label()) {
+			t.Errorf("width=%d: View missing header %q at the exact threshold", need, s.Label())
+		}
+	}
+}
+
+func TestViewRendersNormallyBeforeFirstWindowSizeMsg(t *testing.T) {
+	m := NewBoardModel(seeded(t)) // width is 0 until SetSize is called
+	out := m.View()
+	if strings.Contains(out, "too narrow") {
+		t.Errorf("width=0 (pre-WindowSizeMsg) should fall through to the normal path, not warn:\n%s", out)
+	}
+	for _, s := range task.Statuses {
+		if !strings.Contains(out, s.Label()) {
+			t.Errorf("width=0: View missing header %q", s.Label())
+		}
+	}
+}
