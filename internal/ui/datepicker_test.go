@@ -247,3 +247,19 @@ func TestPickerViewRendersEveryMonthWithoutPanicking(t *testing.T) {
 		}
 	}
 }
+
+func TestPickerViewTodayAndCursorOnTheSameCell(t *testing.T) {
+	d := day(2026, time.August, 9)
+	out := stripANSI(newDatePicker(d).View(d))
+	if !strings.Contains(out, "[ 9]") {
+		t.Errorf("View does not bracket the day when it is both today and selected:\n%s", out)
+	}
+	if got := strings.Count(out, "["); got != 1 {
+		t.Errorf("View brackets %d days, want exactly 1", got)
+	}
+	for _, line := range strings.Split(newDatePicker(d).View(d), "\n")[1:] {
+		if w := lipgloss.Width(line); w != pickerWidth {
+			t.Errorf("row is %d columns, want %d: %q", w, pickerWidth, stripANSI(line))
+		}
+	}
+}

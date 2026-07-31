@@ -441,12 +441,13 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 		a2 := m2.(AppModel)
 		check("form open", a2)
 
+		// Two tabs land on the Deadline field, which shows the calendar on
+		// its own — it is the tallest state the form can be in.
 		m3, _ := a2.Update(tea.KeyMsg{Type: tea.KeyTab})
 		m3, _ = m3.(AppModel).Update(tea.KeyMsg{Type: tea.KeyTab})
-		m4, _ := m3.(AppModel).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
-		a4 := m4.(AppModel)
+		a4 := m3.(AppModel)
 		if !a4.board.picker.open {
-			t.Fatalf("height=%d: ctrl+d did not open the calendar, test setup is broken", h)
+			t.Fatalf("height=%d: the calendar is not open on the Deadline field, test setup is broken", h)
 		}
 		check("form + calendar open", a4)
 	}

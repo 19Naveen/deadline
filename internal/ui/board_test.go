@@ -1133,4 +1133,27 @@ func TestBackspaceClearsTheDeadlineAndKeepsTheCalendar(t *testing.T) {
 	if !m.picker.open {
 		t.Error("calendar closed when the field was emptied, want it to stay up")
 	}
+	if !sameDay(m.picker.cursor, ref) {
+		t.Errorf("cursor = %v, want it back on today once the field is empty", m.picker.cursor)
+	}
+}
+
+func TestClearingThenRetypingKeepsTheCalendarInStep(t *testing.T) {
+	m := toDeadline(t, &task.Board{})
+	for _, r := range "09/08/2026" {
+		m, _ = m.Update(key(string(r)))
+	}
+	for i := 0; i < 10; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	if !sameDay(m.picker.cursor, ref) {
+		t.Fatalf("cursor = %v, want today after clearing", m.picker.cursor)
+	}
+	for _, r := range "25/12/2026" {
+		m, _ = m.Update(key(string(r)))
+	}
+	want := time.Date(2026, time.December, 25, 0, 0, 0, 0, time.Local)
+	if !sameDay(m.picker.cursor, want) {
+		t.Errorf("cursor = %v, want it to follow the retyped date to 25/12/2026", m.picker.cursor)
+	}
 }

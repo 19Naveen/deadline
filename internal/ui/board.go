@@ -646,16 +646,21 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	return m, cmd
 }
 
-// seedPicker points the calendar at the date currently typed in the Deadline
-// field, or at today when that field is blank or not yet a valid date.
+// seedPicker points the calendar at whatever the Deadline field currently
+// says. A complete date wins; an empty field falls back to today. A partly
+// typed date is the one case that leaves the cursor alone — snapping back to
+// today on every keystroke would make the calendar jump around while you
+// type. Note parseDeadline reports an empty field as (nil, nil), a valid "no
+// deadline", so emptiness has to be checked separately from a parse failure.
 func (m *BoardModel) seedPicker() {
-	seed := m.now()
-	if d, err := parseDeadline(m.inputs[fieldDeadline].Value()); err == nil && d != nil {
-		seed = *d
-	} else if m.picker.open {
-		return // mid-typing: leave the cursor alone rather than snapping to today
+	text := strings.TrimSpace(m.inputs[fieldDeadline].Value())
+	d, err := parseDeadline(text)
+	switch {
+	case err == nil && d != nil:
+		m.picker = newDatePicker(*d)
+	case text == "" || !m.picker.open:
+		m.picker = newDatePicker(m.now())
 	}
-	m.picker = newDatePicker(seed)
 }
 
 func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
