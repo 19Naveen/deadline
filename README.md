@@ -1,6 +1,6 @@
 <div align="center">
 
-# deadline
+<img src="banner.png" alt="deadline" width="100%">
 
 *Green. Amber. Red. Then a cross.*
 
