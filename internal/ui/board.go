@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -28,6 +29,7 @@ const (
 	modeInput
 	modeMove
 	modeConfirm
+	modeDetail
 )
 
 // Fields of the add/edit form, in tab order.
@@ -35,6 +37,7 @@ const (
 	fieldTitle = iota
 	fieldDesc
 	fieldDeadline
+	fieldCount
 )
 
 // BoardModel is the kanban page.
@@ -46,9 +49,11 @@ type BoardModel struct {
 	focus focusMode
 	mode  boardMode
 
-	inputs [3]textinput.Model
-	field  int        // which of inputs has focus
-	picker datePicker // the deadline calendar, when open
+	title    textinput.Model
+	desc     textarea.Model // multi-line: ctrl+j inserts a newline, enter saves
+	deadline textinput.Model
+	field    int        // which of the three fields has focus
+	picker   datePicker // the deadline calendar, when open
 
 	editID   string      // set while editing an existing task
 	grabID   string      // set while in modeMove
@@ -65,20 +70,123 @@ type BoardModel struct {
 // NewBoardModel wires a board into a fresh page model.
 func NewBoardModel(b *task.Board) BoardModel {
 	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now}
-	placeholders := [3]string{"task title", "description (optional)", "DD/MM/YYYY (optional)"}
-	limits := [3]int{200, 500, 10}
-	for i := range m.inputs {
+
+	line := func(placeholder string, limit int) textinput.Model {
 		in := textinput.New()
-		in.Placeholder = placeholders[i]
-		in.CharLimit = limits[i]
+		in.Placeholder = placeholder
+		in.CharLimit = limit
 		in.Prompt = "› "
-		m.inputs[i] = in
+		return in
 	}
+	m.title = line("task title", 200)
+	m.deadline = line("DD/MM/YYYY (optional)", 10)
+
+	m.desc = textarea.New()
+	m.desc.Placeholder = "description (optional) · ctrl+j for a new line"
+	m.desc.CharLimit = 500
+	m.desc.Prompt = "› "
+	m.desc.ShowLineNumbers = false
+	// Enter must reach updateInput to save the task, so the newline moves to
+	// ctrl+j. Terminals send 0x0A for ctrl+j and 0x0D for enter, so the two
+	// stay distinguishable.
+	m.desc.KeyMap.InsertNewline.SetKeys("ctrl+j")
+	m.sizeForm()
 	return m
 }
 
 // SetSize records the terminal size for layout.
-func (m *BoardModel) SetSize(w, h int) { m.width, m.height = w, h }
+func (m *BoardModel) SetSize(w, h int) {
+	m.width, m.height = w, h
+	m.sizeForm()
+}
+
+const (
+	// popupMaxWidth caps the centred detail/form panel: past this a line of
+	// description is too long to read comfortably.
+	popupMaxWidth = 64
+	// labelWidth is the form's left gutter, wide enough for "Description".
+	labelWidth = 12
+	// descRows is how many rows of the description are visible at once; the
+	// textarea scrolls past that.
+	descRows = 4
+)
+
+// popupWidth is the content width of the centred panels, leaving a margin so
+// the popup reads as floating over the board rather than filling the screen.
+func (m BoardModel) popupWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	w -= 8
+	if w > popupMaxWidth {
+		w = popupMaxWidth
+	}
+	if w < minColumnWidth {
+		w = minColumnWidth
+	}
+	return w
+}
+
+// sizeForm fits the three fields inside the popup, so a long value scrolls
+// inside its own box instead of stretching the panel past the terminal.
+func (m *BoardModel) sizeForm() {
+	inner := m.popupWidth() - labelWidth - 2 // 2 for the panel's own padding
+	if inner < 10 {
+		inner = 10
+	}
+	m.title.Width = inner - 2 // textinput.Width excludes its "› " prompt
+	m.deadline.Width = inner - 2
+	m.desc.SetWidth(inner)
+	rows, _ := m.formRows()
+	m.desc.SetHeight(rows)
+}
+
+// formRows splits the terminal's height between the popup's fixed furniture,
+// the calendar, and the description box: rows is how tall the description box
+// may be, calendar whether the calendar still fits. Nothing else in the form
+// can shrink, so on a terminal too short for both the calendar is what gives
+// — the date can still be typed. Callers must re-run this (via sizeForm)
+// whenever the height or the picker changes.
+func (m BoardModel) formRows() (rows int, calendar bool) {
+	rows, calendar = descRows, m.picker.open
+	if m.height <= 0 {
+		return rows, calendar
+	}
+	fixed := 8 // 2 page rows + 2 border + heading + title + deadline + hint
+	if m.err != "" {
+		fixed++
+	}
+	cal := 0
+	if calendar {
+		cal = lipgloss.Height(m.picker.View(m.now())) + 3 // 2 blank rows + its hint
+	}
+	if m.height-fixed-cal < 1 {
+		calendar, cal = false, 0
+	}
+	if spare := m.height - fixed - cal; spare < rows {
+		rows = spare
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows, calendar
+}
+
+// overlay centres a panel on the page. lipgloss has no compositing at this
+// version, so the popup replaces the board rather than floating over it.
+// ponytail: no true overlay, revisit if the board behind is worth the
+// ANSI-aware line surgery it would take.
+func (m BoardModel) overlay(panel string) string {
+	w, h := m.width, m.height-2 // AppModel joins the tab bar on above us
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 22
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, panel)
+}
 
 func (m BoardModel) currentStatus() task.Status { return task.Statuses[m.col] }
 
@@ -138,17 +246,14 @@ func (m BoardModel) minBoardWidth() int {
 }
 
 // minColumnBlockHeight is the least columnHeight() will ever return: header,
-// blank line, one card row, plus the column's own top+bottom border. Below
-// it a column shows nothing worth looking at, so View bails out of drawing
-// the board entirely rather than forcing this floor and overflowing.
+// blank line, one card row, plus the column's own top+bottom border.
 const minColumnBlockHeight = 5
 
 // rawColumnHeight is columnHeight() before its floor is applied — what the
-// terminal actually has room for, which can go negative on a short terminal
-// with a tall footer (the form, or the form with the calendar open).
-// Reserves one row for the tab bar (AppModel joins that on above this
-// model's own View), two for the column block's border, and one spare row
-// so the board isn't rendered flush against the very last line.
+// terminal actually has room for, which can go negative on a very short
+// terminal. Reserves one row for the tab bar (AppModel joins that on above
+// this model's own View), two for the column block's border, and one spare
+// row so the board isn't rendered flush against the very last line.
 func (m BoardModel) rawColumnHeight() int {
 	return m.height - 4 - m.footerRows
 }
@@ -161,23 +266,24 @@ func (m BoardModel) columnHeight() int {
 	return h
 }
 
-// View renders the four columns side by side plus the footer line. Below
+// View renders the four columns side by side plus the footer line, or a
+// centred popup when a task is expanded or the form is open. Below
 // minBoardWidth the columns would overflow and wrap into a scrambled mess,
-// so it renders a short warning instead. m.width == 0 (before the first
-// WindowSizeMsg) falls through to the normal path, which defaults to 80.
+// so it renders a short warning instead — the popups are exempt, they size
+// themselves and stay readable on a narrow terminal. m.width == 0 (before
+// the first WindowSizeMsg) falls through to the normal path, which defaults
+// to 80.
 //
-// The footer is measured before the columns are laid out: in modeInput the
-// footer is the whole bordered form panel (and grows further when the date
-// picker is open), not the fixed one-line hint of normal mode. columnHeight
-// needs that real height, not a hard-coded guess, or the calendar pushes the
-// board off the top of the screen. m has a value receiver, so the recorded
-// height is stashed on this local copy before it is used below.
-//
-// When the form footer alone leaves no room for even a floored column block,
-// clamping to the floor would still overflow the terminal. The user has the
-// form open and is looking at it, so below that point View shows just the
-// footer instead of a board squeezed to nothing and scrolled off screen.
+// The footer is measured before the columns are laid out so columnHeight has
+// its real height rather than a hard-coded guess. m has a value receiver, so
+// the recorded height is stashed on this local copy before it is used below.
 func (m BoardModel) View() string {
+	switch m.mode {
+	case modeDetail:
+		return m.overlay(m.renderDetail())
+	case modeInput:
+		return m.overlay(m.renderForm())
+	}
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		return MutedStyle.Render(fmt.Sprintf(
 			"terminal too narrow\n\ngotodo needs at least %d columns for the four-column board.\nThis terminal is %d. Widen it, or press tab for Analytics or Archive.",
@@ -185,10 +291,6 @@ func (m BoardModel) View() string {
 	}
 	footer := m.renderFooter()
 	m.footerRows = lipgloss.Height(footer)
-
-	if m.mode == modeInput && m.rawColumnHeight() < minColumnBlockHeight {
-		return footer
-	}
 
 	cw := m.columnWidth()
 	cols := make([]string, 0, len(task.Statuses))
@@ -330,7 +432,7 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 
 	lines := []string{title}
 	if t.Description != "" {
-		lines = append(lines, MutedStyle.Render(truncate(t.Description, inner)))
+		lines = append(lines, descLine(t.Description, inner))
 	}
 	if dl := RenderDeadline(t, m.now()); dl != "" {
 		lines = append(lines, dl)
@@ -345,6 +447,46 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 	default:
 		return CardStyle.Render(body)
 	}
+}
+
+// descLine is the one-line description a list entry shows. A multi-line
+// description collapses to its first line plus an ellipsis, so a long note
+// cannot stretch a card past the row budget its column planned for it — the
+// whole thing is one enter away in the detail popup. Shared by the board's
+// cards and the archive's list.
+func descLine(desc string, width int) string {
+	first, rest, _ := strings.Cut(desc, "\n")
+	if strings.TrimSpace(rest) != "" {
+		first += " …"
+	}
+	return MutedStyle.Render(truncate(first, width))
+}
+
+// renderDetail is the centred popup for the selected task: the full title and
+// description, wrapped rather than truncated, so a long task is readable
+// without opening the editor.
+// ponytail: no scrolling, a description past the terminal height overflows;
+// add a viewport if that ever bites.
+func (m BoardModel) renderDetail() string {
+	t, ok := m.selectedTask()
+	if !ok {
+		return ""
+	}
+	w := m.popupWidth()
+	wrap := lipgloss.NewStyle().Width(w)
+
+	rows := []string{
+		wrap.Copy().Bold(true).Foreground(AccentFor(t.Status)).Render(t.Title),
+		MutedStyle.Render(t.Status.Label()),
+	}
+	if t.Description != "" {
+		rows = append(rows, "", wrap.Copy().Foreground(ColText).Render(t.Description))
+	}
+	if dl := RenderDeadline(t, m.now()); dl != "" {
+		rows = append(rows, "", dl)
+	}
+	rows = append(rows, "", MutedStyle.Render("e edit · d delete · esc close"))
+	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
 
 // parseDeadline reads a DD/MM/YYYY date. Blank means "no deadline", which is
@@ -379,13 +521,10 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
 	if deadline != nil {
 		dl = FormatDate(*deadline)
 	}
-	for i, v := range [3]string{title, desc, dl} {
-		m.inputs[i].SetValue(v)
-		m.inputs[i].CursorEnd()
-		m.inputs[i].Blur()
-	}
-	m.inputs[fieldTitle].Focus()
-	m.picker = datePicker{}
+	m.title.SetValue(title)
+	m.desc.SetValue(desc)
+	m.deadline.SetValue(dl)
+	m.applyFieldFocus() // sizes the fields too
 }
 
 // closeForm returns to normal mode and drops focus from every field.
@@ -394,57 +533,77 @@ func (m *BoardModel) closeForm() {
 	m.editID = ""
 	m.err = ""
 	m.picker = datePicker{}
-	for i := range m.inputs {
-		m.inputs[i].Blur()
-	}
+	m.title.Blur()
+	m.desc.Blur()
+	m.deadline.Blur()
 }
 
-// focusField moves form focus by delta, wrapping at both ends.
-func (m *BoardModel) focusField(delta int) {
-	m.inputs[m.field].Blur()
-	m.field = (m.field + delta + len(m.inputs)) % len(m.inputs)
-	m.inputs[m.field].Focus()
-	m.inputs[m.field].CursorEnd()
+// applyFieldFocus puts the cursor in m.field's widget and takes it off the
+// other two, and opens the calendar only on the Deadline field.
+func (m *BoardModel) applyFieldFocus() {
+	m.title.Blur()
+	m.desc.Blur()
+	m.deadline.Blur()
+	switch m.field {
+	case fieldTitle:
+		m.title.Focus()
+		m.title.CursorEnd()
+	case fieldDesc:
+		m.desc.Focus()
+	case fieldDeadline:
+		m.deadline.Focus()
+		m.deadline.CursorEnd()
+	}
 	if m.field == fieldDeadline {
 		m.seedPicker()
 	} else {
 		m.picker = datePicker{}
 	}
+	m.sizeForm() // the calendar's rows come out of the description box
 }
 
-// renderForm draws the three-field entry panel shown at the bottom.
+// focusField moves form focus by delta, wrapping at both ends.
+func (m *BoardModel) focusField(delta int) {
+	m.field = (m.field + delta + fieldCount) % fieldCount
+	m.applyFieldFocus()
+}
+
+// renderForm draws the three-field entry panel, centred by View.
 func (m BoardModel) renderForm() string {
 	heading := "new task"
 	if m.editID != "" {
 		heading = "edit task"
 	}
-	labels := [3]string{"Title", "Description", "Deadline"}
-
-	rows := []string{TitleStyle.Render(heading)}
-	for i, label := range labels {
-		name := MutedStyle.Render(fmt.Sprintf("%-12s", label))
+	label := func(i int, text string) string {
+		style := MutedStyle
 		if i == m.field {
-			name = lipgloss.NewStyle().Foreground(ColAccent).Bold(true).
-				Render(fmt.Sprintf("%-12s", label))
+			style = lipgloss.NewStyle().Foreground(ColAccent).Bold(true)
 		}
-		rows = append(rows, name+m.inputs[i].View())
+		return style.Render(fmt.Sprintf("%-*s", labelWidth, text))
+	}
+
+	rows := []string{
+		TitleStyle.Render(heading),
+		label(fieldTitle, "Title") + m.title.View(),
+		// The description box is several rows tall, so its label is joined
+		// alongside rather than concatenated onto the first line.
+		lipgloss.JoinHorizontal(lipgloss.Top, label(fieldDesc, "Description"), m.desc.View()),
+		label(fieldDeadline, "Deadline") + m.deadline.View(),
 	}
 	if m.err != "" {
 		rows = append(rows, lipgloss.NewStyle().Foreground(AccentFor(task.StatusBlocked)).
 			Render("! "+m.err))
 	}
-	if m.picker.open {
+	if _, calendar := m.formRows(); calendar {
 		rows = append(rows, "", m.picker.View(m.now()), "",
 			MutedStyle.Render("hjkl day/week · t today · or type the date"))
 	}
-	rows = append(rows, MutedStyle.Render("tab/shift+tab field · enter save · esc cancel"))
-	return ColumnStyle.Render(strings.Join(rows, "\n"))
+	rows = append(rows, MutedStyle.Render("tab field · ctrl+j new line · enter save · esc cancel"))
+	return ColumnStyle.Copy().Width(m.popupWidth()).Render(strings.Join(rows, "\n"))
 }
 
 func (m BoardModel) renderFooter() string {
 	switch m.mode {
-	case modeInput:
-		return "\n" + m.renderForm()
 	case modeMove:
 		return HelpStyle.Render("move: h/l reposition · enter drop · esc cancel")
 	case modeConfirm:
@@ -458,7 +617,7 @@ func (m BoardModel) renderFooter() string {
 		focusLabel = "column"
 	}
 	return HelpStyle.Render(
-		"focus: " + focusLabel + " (ctrl+t) · hjkl move · a add · e edit · d delete · m grab · tab analytics · ? help · q quit")
+		"focus: " + focusLabel + " (ctrl+t) · hjkl move · enter open · a add · e edit · d delete · m grab · tab analytics · ? help · q quit")
 }
 
 // truncate shortens s to fit n display columns, appending an ellipsis when
@@ -495,6 +654,8 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 		return m.updateMove(keyMsg)
 	case modeConfirm:
 		return m.updateConfirm(keyMsg)
+	case modeDetail:
+		return m.updateDetail(keyMsg)
 	}
 	return m.updateNormal(keyMsg)
 }
@@ -533,6 +694,12 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		if m.focus == focusItem {
 			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
 		}
+	case "enter":
+		if _, ok := m.selectedTask(); !ok {
+			return m, nil
+		}
+		m.focus = focusItem
+		m.mode = modeDetail
 	case "a":
 		m.openForm("", "", "", nil)
 	case "e":
@@ -580,17 +747,17 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
-		title := strings.TrimSpace(m.inputs[fieldTitle].Value())
+		title := strings.TrimSpace(m.title.Value())
 		if title == "" {
 			m.err = "title must not be blank"
 			return m, nil // stay in the form
 		}
-		deadline, err := parseDeadline(m.inputs[fieldDeadline].Value())
+		deadline, err := parseDeadline(m.deadline.Value())
 		if err != nil {
 			m.err = err.Error()
 			return m, nil // stay in the form
 		}
-		desc := strings.TrimSpace(m.inputs[fieldDesc].Value())
+		desc := strings.TrimSpace(m.desc.Value())
 
 		if m.editID != "" {
 			if err := m.board.Edit(m.editID, title, desc, deadline, m.now()); err != nil {
@@ -628,22 +795,51 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			moved = false
 		}
 		if moved {
-			m.inputs[fieldDeadline].SetValue(FormatDate(m.picker.cursor))
-			m.inputs[fieldDeadline].CursorEnd()
+			m.deadline.SetValue(FormatDate(m.picker.cursor))
+			m.deadline.CursorEnd()
 			m.err = ""
+			m.sizeForm() // a month with six week rows makes the calendar taller
 			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
-	m.inputs[m.field], cmd = m.inputs[m.field].Update(k)
-
-	// Typing wins over the cursor: once the text parses, the calendar jumps
-	// to it. A half-typed date leaves the cursor where it was.
-	if m.field == fieldDeadline {
+	switch m.field {
+	case fieldTitle:
+		m.title, cmd = m.title.Update(k)
+	case fieldDesc:
+		m.desc, cmd = m.desc.Update(k)
+	case fieldDeadline:
+		m.deadline, cmd = m.deadline.Update(k)
+		// Typing wins over the cursor: once the text parses, the calendar
+		// jumps to it. A half-typed date leaves the cursor where it was.
 		m.seedPicker()
+		m.sizeForm()
 	}
 	return m, cmd
+}
+
+// updateDetail handles the expanded-task popup: read-only, with e/d as the
+// same shortcuts the board uses so the popup is a place to act from too.
+func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
+	switch k.String() {
+	case "esc", "enter", "q":
+		m.mode = modeNormal
+	case "e":
+		t, ok := m.selectedTask()
+		if !ok {
+			m.mode = modeNormal
+			return m, nil
+		}
+		m.openForm(t.ID, t.Title, t.Description, t.Deadline)
+	case "d":
+		if _, ok := m.selectedTask(); !ok {
+			m.mode = modeNormal
+			return m, nil
+		}
+		m.mode = modeConfirm
+	}
+	return m, nil
 }
 
 // seedPicker points the calendar at whatever the Deadline field currently
@@ -653,7 +849,7 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 // type. Note parseDeadline reports an empty field as (nil, nil), a valid "no
 // deadline", so emptiness has to be checked separately from a parse failure.
 func (m *BoardModel) seedPicker() {
-	text := strings.TrimSpace(m.inputs[fieldDeadline].Value())
+	text := strings.TrimSpace(m.deadline.Value())
 	d, err := parseDeadline(text)
 	switch {
 	case err == nil && d != nil:

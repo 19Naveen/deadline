@@ -122,7 +122,7 @@ func (m ArchiveModel) renderEntry(i int, t task.Task, width int) string {
 
 	rows := []string{truncate(t.Title, inner)}
 	if t.Description != "" {
-		rows = append(rows, MutedStyle.Render(truncate(t.Description, inner)))
+		rows = append(rows, descLine(t.Description, inner))
 	}
 	rows = append(rows, m.metaLine(t, inner))
 

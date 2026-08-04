@@ -35,7 +35,7 @@ Four columns. Three-line cards. Dates that change colour as they close in.
 │  Third follow-up     ││                      ││                      ││                      │
 │  ● 27/07/2026 ✗      ││                      ││                      ││                      │
 ╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯
-focus: item (ctrl+t) · hjkl move · a add · e edit · d delete · m grab · tab analytics · ? help
+focus: item (ctrl+t) · hjkl move · enter open · a add · e edit · d delete · m grab · tab analytics · ? help
 ```
 
 No mouse. No config file. No account.
@@ -136,6 +136,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 
 | Key | What it does |
 |---|---|
+| `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `esc` close |
 | `a` | add a task |
 | `e` | edit the selected task |
 | `d` | delete it, after a `y`/`n` confirm |
@@ -148,7 +149,16 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `?` | key list |
 | `q` | quit |
 
-Adding and editing open the same three-field form. `tab` and `shift+tab` move between Title, Description and Deadline. `enter` saves from any field, `esc` throws it away.
+`enter` on a card opens it centred on the screen, wrapped rather than
+truncated — the card in the column only has room for the first line of a
+description. It is read-only, but `e` and `d` work from there.
+
+Adding and editing open the same three-field form, centred in the same place.
+`tab` and `shift+tab` move between Title, Description and Deadline. `enter`
+saves from any field, `esc` throws it away.
+
+The Description is multi-line: `ctrl+j` starts a new line, and `enter` still
+saves. The box shows four lines at a time and scrolls past that.
 
 Dates go in as `DD/MM/YYYY`. A date it cannot read keeps the form open and tells you the format, rather than quietly dropping what you typed.
 

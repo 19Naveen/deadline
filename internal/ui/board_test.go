@@ -118,6 +118,10 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyLeft}
 	case "right":
 		return tea.KeyMsg{Type: tea.KeyRight}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "ctrl+j":
+		return tea.KeyMsg{Type: tea.KeyCtrlJ}
 	}
 	panic("unhandled key in test helper: " + s)
 }
@@ -271,11 +275,11 @@ func TestEditReplacesTitle(t *testing.T) {
 	if m.mode != modeInput {
 		t.Fatalf("mode = %v, want modeInput", m.mode)
 	}
-	if m.inputs[fieldTitle].Value() != "[Old title]" {
-		t.Errorf("input prefilled with %q, want the existing title", m.inputs[fieldTitle].Value())
+	if m.title.Value() != "[Old title]" {
+		t.Errorf("input prefilled with %q, want the existing title", m.title.Value())
 	}
 	// clear then type
-	m.inputs[fieldTitle].SetValue("new")
+	m.title.SetValue("new")
 	m = press(m, "enter")
 	if m.board.Tasks[0].Title != "new" {
 		t.Errorf("Title = %q, want %q", m.board.Tasks[0].Title, "new")
@@ -779,9 +783,9 @@ func TestFormTabCyclesFields(t *testing.T) {
 func TestFormSavesAllThreeFields(t *testing.T) {
 	m := fixedClock(NewBoardModel(&task.Board{}))
 	m = press(m, "a")
-	m.inputs[fieldTitle].SetValue("[Ship the report]")
-	m.inputs[fieldDesc].SetValue("[draft, review, send]")
-	m.inputs[fieldDeadline].SetValue("02/08/2026")
+	m.title.SetValue("[Ship the report]")
+	m.desc.SetValue("[draft, review, send]")
+	m.deadline.SetValue("02/08/2026")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.mode != modeNormal {
@@ -806,8 +810,8 @@ func TestFormSavesAllThreeFields(t *testing.T) {
 func TestFormRejectsBadDeadlineAndStaysOpen(t *testing.T) {
 	m := fixedClock(NewBoardModel(&task.Board{}))
 	m = press(m, "a")
-	m.inputs[fieldTitle].SetValue("[Ship the report]")
-	m.inputs[fieldDeadline].SetValue("tomorrow")
+	m.title.SetValue("[Ship the report]")
+	m.deadline.SetValue("tomorrow")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.mode != modeInput {
@@ -824,7 +828,7 @@ func TestFormRejectsBadDeadlineAndStaysOpen(t *testing.T) {
 func TestFormBlankTitleStillRejected(t *testing.T) {
 	m := fixedClock(NewBoardModel(&task.Board{}))
 	m = press(m, "a")
-	m.inputs[fieldDesc].SetValue("[a description]")
+	m.desc.SetValue("[a description]")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.mode != modeInput {
@@ -845,13 +849,13 @@ func TestEditPrefillsAllThreeFields(t *testing.T) {
 	if m.mode != modeInput {
 		t.Fatalf("mode = %v, want modeInput", m.mode)
 	}
-	if got := m.inputs[fieldTitle].Value(); got != "[Old title]" {
+	if got := m.title.Value(); got != "[Old title]" {
 		t.Errorf("title field = %q", got)
 	}
-	if got := m.inputs[fieldDesc].Value(); got != "[old description]" {
+	if got := m.desc.Value(); got != "[old description]" {
 		t.Errorf("description field = %q", got)
 	}
-	if got := m.inputs[fieldDeadline].Value(); got != "02/08/2026" {
+	if got := m.deadline.Value(); got != "02/08/2026" {
 		t.Errorf("deadline field = %q, want 02/08/2026", got)
 	}
 }
@@ -863,7 +867,7 @@ func TestEditWithClearedDeadlineRemovesIt(t *testing.T) {
 
 	m := fixedClock(NewBoardModel(b))
 	m = press(m, "e")
-	m.inputs[fieldDeadline].SetValue("")
+	m.deadline.SetValue("")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.board.Tasks[0].Deadline != nil {
@@ -882,7 +886,7 @@ func TestFormErrorClearsAfterSuccessfulSave(t *testing.T) {
 		t.Fatal("err is empty, want a message after a blank title submit")
 	}
 
-	m.inputs[fieldTitle].SetValue("[Task title]")
+	m.title.SetValue("[Task title]")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(m.board.Tasks) != 1 {
@@ -896,7 +900,7 @@ func TestFormErrorClearsAfterSuccessfulSave(t *testing.T) {
 func TestFormEscCancels(t *testing.T) {
 	m := fixedClock(NewBoardModel(&task.Board{}))
 	m = press(m, "a")
-	m.inputs[fieldTitle].SetValue("[Task title]")
+	m.title.SetValue("[Task title]")
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 
 	if m.mode != modeNormal {
@@ -1037,7 +1041,7 @@ func TestHJKLMoveTheCursorAndFillTheField(t *testing.T) {
 		for _, k := range c.keys {
 			m, _ = m.Update(key(k))
 		}
-		if got := m.inputs[fieldDeadline].Value(); got != c.want {
+		if got := m.deadline.Value(); got != c.want {
 			t.Errorf("%v: field = %q, want %q", c.keys, got, c.want)
 		}
 	}
@@ -1048,7 +1052,7 @@ func TestTypingADateMovesTheCalendar(t *testing.T) {
 	for _, r := range "09/08/2026" {
 		m, _ = m.Update(key(string(r)))
 	}
-	if got := m.inputs[fieldDeadline].Value(); got != "09/08/2026" {
+	if got := m.deadline.Value(); got != "09/08/2026" {
 		t.Fatalf("field = %q, want the typed date", got)
 	}
 	if !sameDay(m.picker.cursor, time.Date(2026, time.August, 9, 0, 0, 0, 0, time.Local)) {
@@ -1069,7 +1073,7 @@ func TestHalfTypedDateLeavesTheCursorAlone(t *testing.T) {
 
 func TestEnterSavesFromTheDeadlineFieldRatherThanPicking(t *testing.T) {
 	m := toDeadline(t, &task.Board{})
-	m.inputs[fieldTitle].SetValue("[Task title]")
+	m.title.SetValue("[Task title]")
 	m, _ = m.Update(key("l")) // pick 31/07 via the calendar
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1127,7 +1131,7 @@ func TestBackspaceClearsTheDeadlineAndKeepsTheCalendar(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	}
-	if got := m.inputs[fieldDeadline].Value(); got != "" {
+	if got := m.deadline.Value(); got != "" {
 		t.Errorf("field = %q, want empty after backspacing it out", got)
 	}
 	if !m.picker.open {
@@ -1155,5 +1159,151 @@ func TestClearingThenRetypingKeepsTheCalendarInStep(t *testing.T) {
 	want := time.Date(2026, time.December, 25, 0, 0, 0, 0, time.Local)
 	if !sameDay(m.picker.cursor, want) {
 		t.Errorf("cursor = %v, want it to follow the retyped date to 25/12/2026", m.picker.cursor)
+	}
+}
+
+// --- expanded detail popup, and multi-line descriptions ---
+
+// typeInto feeds a string one rune at a time, so the widget sees real
+// keystrokes rather than a SetValue.
+func typeInto(m BoardModel, s string) BoardModel {
+	for _, r := range s {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return m
+}
+
+func TestEnterExpandsTheSelectedTaskCentred(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[A long task title]", "first line\nsecond line", nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	m = press(m, "enter")
+
+	if m.mode != modeDetail {
+		t.Fatalf("mode = %v, want modeDetail", m.mode)
+	}
+	out := stripANSI(m.View())
+	for _, want := range []string{"[A long task title]", "first line", "second line", "esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail popup is missing %q:\n%s", want, out)
+		}
+	}
+	// Centred: the panel's border must not start in column 0, and there must
+	// be blank rows above it.
+	lines := strings.Split(out, "\n")
+	first := 0
+	for first < len(lines) && strings.TrimSpace(lines[first]) == "" {
+		first++
+	}
+	if first == 0 {
+		t.Errorf("popup is flush with the top row, want it centred:\n%s", out)
+	}
+	if indent := len(lines[first]) - len(strings.TrimLeft(lines[first], " ")); indent == 0 {
+		t.Errorf("popup starts in column 0, want it centred:\n%s", out)
+	}
+	// Board is replaced while the popup is up, not stacked under it.
+	if strings.Contains(out, "TODO (") {
+		t.Errorf("the board is still drawn behind the popup:\n%s", out)
+	}
+}
+
+func TestEnterOnAnEmptyColumnDoesNothing(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m = press(m, "enter")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal with no task to expand", m.mode)
+	}
+}
+
+func TestDetailPopupEditsAndCloses(t *testing.T) {
+	m := fixedClock(NewBoardModel(seeded(t)))
+	m.SetSize(120, 40)
+
+	m = press(m, "enter", "e")
+	if m.mode != modeInput || m.editID == "" {
+		t.Fatalf("mode = %v, editID = %q, want the edit form for the expanded task", m.mode, m.editID)
+	}
+	if got := m.title.Value(); got != "[todo task]" {
+		t.Errorf("title prefilled with %q, want the expanded task's title", got)
+	}
+
+	m = press(fixedClock(NewBoardModel(seeded(t))), "enter", "esc")
+	if m.mode != modeNormal {
+		t.Errorf("mode = %v, want modeNormal after esc", m.mode)
+	}
+	m = press(fixedClock(NewBoardModel(seeded(t))), "enter", "d")
+	if m.mode != modeConfirm {
+		t.Errorf("mode = %v, want modeConfirm after d in the popup", m.mode)
+	}
+}
+
+// The form is a centred popup too: the same panel, placed rather than joined
+// under the board.
+func TestFormIsCentredAndReplacesTheBoard(t *testing.T) {
+	m := fixedClock(NewBoardModel(seeded(t)))
+	m.SetSize(120, 40)
+	m = press(m, "a")
+
+	out := stripANSI(m.View())
+	if strings.Contains(out, "TODO (") {
+		t.Errorf("the board is still drawn behind the form popup:\n%s", out)
+	}
+	if !strings.Contains(out, "new task") {
+		t.Errorf("form popup did not render:\n%s", out)
+	}
+	lines := strings.Split(out, "\n")
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Errorf("form popup is flush with the top row, want it centred:\n%s", out)
+	}
+}
+
+func TestCtrlJInsertsANewlineInTheDescriptionAndEnterSaves(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+
+	m = press(m, "a")
+	m = typeInto(m, "[Task title]")
+	m = press(m, "tab") // Description
+	m = typeInto(m, "first")
+	m = press(m, "ctrl+j")
+	m = typeInto(m, "second")
+
+	if got := m.desc.Value(); got != "first\nsecond" {
+		t.Fatalf("description = %q, want %q — ctrl+j must insert a newline", got, "first\nsecond")
+	}
+
+	m = press(m, "enter")
+	if m.mode != modeNormal {
+		t.Fatalf("mode = %v, want the form closed — enter must save, not add a line", m.mode)
+	}
+	if len(b.Tasks) != 1 {
+		t.Fatalf("Tasks = %d, want 1", len(b.Tasks))
+	}
+	if got := b.Tasks[0].Description; got != "first\nsecond" {
+		t.Errorf("saved description = %q, want the multi-line value", got)
+	}
+}
+
+func TestMultiLineDescriptionKeepsACardOneLineTall(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[Task title]", "first line\nsecond line\nthird", nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	card := stripANSI(m.renderCard(0, 0, b.Tasks[0], m.columnWidth()))
+	if got := strings.Count(card, "\n") + 1; got != 2 {
+		t.Errorf("card is %d rows tall, want 2 (title + collapsed description):\n%s", got, card)
+	}
+	if strings.Contains(card, "second line") {
+		t.Errorf("card shows the second description line, want it collapsed:\n%s", card)
+	}
+	if !strings.Contains(card, "…") {
+		t.Errorf("card does not mark the description as continued:\n%s", card)
 	}
 }

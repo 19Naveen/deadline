@@ -81,8 +81,8 @@ func TestQIsTypableWhileAddingATask(t *testing.T) {
 			t.Fatal("q quit the app while the input was open")
 		}
 	}
-	if a.board.inputs[fieldTitle].Value() != "q" {
-		t.Errorf("input value = %q, want %q", a.board.inputs[fieldTitle].Value(), "q")
+	if a.board.title.Value() != "q" {
+		t.Errorf("input value = %q, want %q", a.board.title.Value(), "q")
 	}
 }
 
@@ -395,13 +395,10 @@ func TestArchiveTickClampsBoardSelection(t *testing.T) {
 // split pane is an ordinary way to land there), because the bug scaled with
 // how little room the footer left, not with any one fixed height.
 //
-// Below minColumnBlockHeight's worth of room, BoardModel.View gives up on
-// the board and renders just the footer (see View's modeInput bailout) —
-// at that point the one thing left that can overflow is the footer itself
-// (the form-with-calendar panel) being taller than the terminal, which no
-// amount of column-sizing logic can fix. That's allowed here, the same way
-// the old columnHeight floor was allowed to overflow by at most one row:
-// it is the footer's own size, not the board-squeezing bug this test hunts.
+// The form is now a centred popup rather than a footer, so it no longer
+// squeezes the board at all — but it can still overflow on its own, which is
+// what formRows() shrinks the description box and drops the calendar to
+// prevent. Nothing here is allowed to exceed the terminal.
 func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 	for _, h := range []int{15, 18, 20, 23, 24, 40, 50} {
 		a := NewApp(seeded(t))
@@ -413,13 +410,7 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 		check := func(state string, a AppModel) {
 			t.Helper()
 			got := lipgloss.Height(a.View())
-			// footerRows lives only as a local variable inside View (by
-			// design, per the value-receiver trace: it is not meant to
-			// persist on the model), so recompute it the same way View
-			// does rather than reading a.board.footerRows.
-			footerRows := lipgloss.Height(a.board.renderFooter())
-			boardDropped := a.board.mode == modeInput && a.board.height-4-footerRows < minColumnBlockHeight
-			if got > h && !boardDropped {
+			if got > h {
 				t.Errorf("height=%d state=%s: View is %d rows tall, overflows a %d-row terminal by %d:\n%s",
 					h, state, got, h, got-h, a.View())
 			}
