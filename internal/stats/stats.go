@@ -37,8 +37,9 @@ func Counts(tasks []task.Task) map[task.Status]int {
 	return out
 }
 
-// completionDays buckets every completed task by the day it was completed.
-func completionDays(tasks []task.Task, loc *time.Location) map[time.Time]int {
+// CompletionsByDay buckets every completed task by the day it was completed,
+// as midnight in loc. Days with no completions are absent rather than zero.
+func CompletionsByDay(tasks []task.Task, loc *time.Location) map[time.Time]int {
 	out := map[time.Time]int{}
 	for _, t := range tasks {
 		at, ok := task.CompletedAt(t)
@@ -50,13 +51,41 @@ func completionDays(tasks []task.Task, loc *time.Location) map[time.Time]int {
 	return out
 }
 
+// DeadlinesByDay groups tasks by the calendar day they are due, as midnight
+// in loc. Tasks with no deadline are left out entirely; the caller decides
+// which statuses it cares about.
+func DeadlinesByDay(tasks []task.Task, loc *time.Location) map[time.Time][]task.Task {
+	out := map[time.Time][]task.Task{}
+	for _, t := range tasks {
+		if t.Deadline == nil {
+			continue
+		}
+		day := startOfDay(t.Deadline.In(loc))
+		out[day] = append(out[day], t)
+	}
+	return out
+}
+
+// ByDeadline returns the tasks that have a deadline, soonest first. Ties keep
+// board order, so a day's tasks read in the order they were added.
+func ByDeadline(tasks []task.Task) []task.Task {
+	var out []task.Task
+	for _, t := range tasks {
+		if t.Deadline != nil {
+			out = append(out, t)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b task.Task) int { return a.Deadline.Compare(*b.Deadline) })
+	return out
+}
+
 // Throughput returns completions per day for the last `days` days, oldest
 // first, ending on now's day. Empty days are present with N == 0.
 func Throughput(tasks []task.Task, days int, now time.Time) []DayCount {
 	if days < 1 {
 		return nil
 	}
-	byDay := completionDays(tasks, now.Location())
+	byDay := CompletionsByDay(tasks, now.Location())
 	today := startOfDay(now)
 	out := make([]DayCount, 0, days)
 	for i := days - 1; i >= 0; i-- {
@@ -70,7 +99,7 @@ func Throughput(tasks []task.Task, days int, now time.Time) []DayCount {
 // least one completion. The current streak may end on yesterday, since today
 // is not over yet.
 func Streak(tasks []task.Task, now time.Time) (current, longest int) {
-	byDay := completionDays(tasks, now.Location())
+	byDay := CompletionsByDay(tasks, now.Location())
 	if len(byDay) == 0 {
 		return 0, 0
 	}
@@ -104,37 +133,6 @@ func Streak(tasks []task.Task, now time.Time) (current, longest int) {
 		}
 	}
 	return current, longest
-}
-
-// HeatmapGrid returns a 7-row (Mon..Sun) by `weeks`-column grid of
-// completion counts. The rightmost column is the week containing now.
-func HeatmapGrid(tasks []task.Task, weeks int, now time.Time) [][]int {
-	if weeks < 1 {
-		weeks = 1
-	}
-	grid := make([][]int, 7)
-	for i := range grid {
-		grid[i] = make([]int, weeks)
-	}
-	byDay := completionDays(tasks, now.Location())
-
-	// Monday of the current week, then step back to the first shown week.
-	today := startOfDay(now)
-	monday := today.AddDate(0, 0, -weekdayIndex(today))
-	first := monday.AddDate(0, 0, -7*(weeks-1))
-
-	for col := 0; col < weeks; col++ {
-		weekStart := first.AddDate(0, 0, 7*col)
-		for row := 0; row < 7; row++ {
-			grid[row][col] = byDay[weekStart.AddDate(0, 0, row)]
-		}
-	}
-	return grid
-}
-
-// weekdayIndex maps Monday..Sunday to 0..6 (Go's Weekday puts Sunday at 0).
-func weekdayIndex(t time.Time) int {
-	return (int(t.Weekday()) + 6) % 7
 }
 
 // TimeInStatus reconstructs how long a task has spent in each column by

@@ -262,12 +262,12 @@ func TestDirtyMsgTriggersSave(t *testing.T) {
 	}
 }
 
-func TestTabCyclesThreePages(t *testing.T) {
+func TestTabCyclesEveryPage(t *testing.T) {
 	a := app(t)
 	if a.page != pageBoard {
 		t.Fatalf("page = %v, want pageBoard", a.page)
 	}
-	for _, want := range []page{pageAnalytics, pageArchive, pageBoard} {
+	for _, want := range []page{pageAnalytics, pageArchive, pageCalendar, pageBoard} {
 		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyTab})
 		a = m.(AppModel)
 		if a.page != want {

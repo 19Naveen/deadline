@@ -19,7 +19,7 @@ A terminal kanban board that never lets you forget when something is due.
 Four columns. Three-line cards. Dates that change colour as they close in.
 
 ```
-  BOARD    ANALYTICS    ARCHIVE    tab to switch
+  BOARD    ANALYTICS    ARCHIVE    CALENDAR    tab to switch
 ╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮
 │ TODO (3)             ││ DOING (1)            ││ BLOCKED (1)          ││ DONE (1)             │
 │                      ││                      ││                      ││                      │
@@ -84,17 +84,19 @@ BLOCKED
   Waiting on design                        2h
 STREAK
 current 1 day · longest 1 day
-Mon ············
-    ············
-Wed ············
-    ············
-Fri ···········█
-    ············
-Sun ············
-last 12 weeks, ending 31/07/2026
+          May 2026                      June 2026                      July 2026
+ Mo  Tu  We  Th  Fr  Sa  Su     Mo  Tu  We  Th  Fr  Sa  Su     Mo  Tu  We  Th  Fr  Sa  Su
+                  1   2   3      1   2   3   4   5   6   7              1   2   3   4   5
+  4   5   6   7   8   9  10      8   9  10  11  12  13  14      6   7   8   9  10  11  12
+ 11  12  13  14  15  16  17     15  16  17  18 ▄19 ▄20  21     13  14  15  16  17  18  19
+ 18  19  20 ▄21  22  23  24     22  23  24  25  26  27  28    ▄20 ▄21  22  23  24  25  26
+ 25  26  27  28  29  30  31     29  30                        █27 ▄28 ▄29  30  31
+▁▄▓█ more finished that day · underline is today, 30/07/2026
 ```
 
 Cycle time runs from created to done. Time-per-column shows where work actually sits, which is rarely where you think.
+
+The streak is three real months, not an anonymous strip: a day you finished something is shaded, darker the more you closed, and today is underlined. Narrow the terminal and it drops to two months, then one.
 
 ---
 
@@ -104,7 +106,33 @@ Third page. A task that has sat in Done for 14 days moves here on its own, at la
 
 It is read-only. Nothing you can press there will change a task.
 
-Archived tasks still count in throughput, cycle time, streak and the heatmap. Hiding a task never erases it from your history — only the four column tiles and the board itself stop counting it.
+Archived tasks still count in throughput, cycle time and the streak. Hiding a task never erases it from your history — only the four column tiles and the board itself stop counting it.
+
+---
+
+## Calendar
+
+Fourth page. Every open deadline on the board, on real months, in the colour it already wears on its card.
+
+```
+DEADLINES
+         July 2026                     August 2026                   September 2026
+ Mo  Tu  We  Th  Fr  Sa  Su     Mo  Tu  We  Th  Fr  Sa  Su     Mo  Tu  We  Th  Fr  Sa  Su
+          1   2   3   4   5                          1   2          1   2   3   4   5   6
+  6   7   8   9  10  11  12      3 ● 4   5   6   7   8   9      7   8   9  10  11  12 ●13
+ 13  14  15  16  17  18  19     10  11 ●12  13  14  15  16     14  15  16  17  18  19  20
+ 20  21  22  23  24  25  26     17  18  19  20  21  22  23     21  22  23  24  25  26  27
+●27  28  29 ●30 ●31             24  25  26 ●27  28  29  30     28  29  30
+● due · green >3 days · amber ≤3 · red ≤1 or overdue · underline is today
+UPCOMING
+● 27/07/2026  Chase the invoice                     3 days late
+● 30/07/2026  Renew the TLS cert                    today
+● 04/08/2026  Ship the report                       in 5 days
+```
+
+`h` and `l` step a month either way, `t` comes back to this one. A day with more than one deadline takes the colour of its most pressing task.
+
+Done tasks are left off: a deadline you already met is history, and this page is about what is coming. Three months need 90 columns; below that it shows two, and below 59 just one. The upcoming list fills whatever rows are left and says how many it could not fit.
 
 ---
 
@@ -145,7 +173,8 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `j` `k` | previous / next task |
 | `g` `G` | first / last task in the column |
 | `ctrl+t` | switch between moving the cursor and moving between whole columns |
-| `tab` | cycle Board, Analytics, Archive |
+| `tab` | cycle Board, Analytics, Archive, Calendar |
+| `h` `l` `t` | on the Calendar page: previous month, next month, back to today |
 | `?` | key list |
 | `q` | quit |
 

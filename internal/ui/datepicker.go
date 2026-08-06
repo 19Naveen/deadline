@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -75,58 +74,30 @@ func monthGrid(cursor time.Time) [6][7]time.Time {
 // pickerWidth is the rendered width: seven cells of four columns each.
 const pickerWidth = 28
 
-// View renders the month as a Monday-first grid. today is passed in rather
-// than read from the clock so tests stay deterministic.
+// View renders the month as a Monday-first grid, through the shared
+// monthView layout. today is passed in rather than read from the clock so
+// tests stay deterministic.
 //
 // Every cell is exactly four columns, so the brackets around the selected
 // day occupy space the cell already owns and cannot shift a row out of line
-// with the header. Rows are padded, not trimmed, for the same reason.
+// with the header.
 //
 // The two markers are independent and can land on the same cell: today is
 // always green, and the selected day is always bracketed.
 func (p datePicker) View(today time.Time) string {
-	title := p.cursor.Format("January 2006")
-	pad := (pickerWidth - len(title)) / 2
-	if pad < 0 {
-		pad = 0
-	}
-
-	rows := []string{
-		strings.Repeat(" ", pad) + TitleStyle.Render(title),
-		MutedStyle.Render(" Mo  Tu  We  Th  Fr  Sa  Su "),
-	}
-
-	for _, week := range monthGrid(p.cursor) {
-		var b strings.Builder
-		blank := true
-		for _, cell := range week {
-			if cell.IsZero() {
-				b.WriteString("    ")
-				continue
-			}
-			blank = false
-
-			text := fmt.Sprintf(" %2d ", cell.Day())
-			if sameDay(cell, p.cursor) {
-				text = fmt.Sprintf("[%2d]", cell.Day())
-			}
-
-			style := lipgloss.NewStyle()
-			switch {
-			case sameDay(cell, today):
-				style = style.Foreground(AccentFor(task.StatusDone))
-			case sameDay(cell, p.cursor):
-				style = style.Foreground(ColAccent)
-			}
-			if sameDay(cell, p.cursor) {
-				style = style.Bold(true)
-			}
-			b.WriteString(style.Render(text))
+	return monthView(p.cursor, func(day time.Time) (string, lipgloss.Style) {
+		text := fmt.Sprintf(" %2d ", day.Day())
+		style := lipgloss.NewStyle()
+		switch {
+		case sameDay(day, today):
+			style = style.Foreground(AccentFor(task.StatusDone))
+		case sameDay(day, p.cursor):
+			style = style.Foreground(ColAccent)
 		}
-		if blank {
-			continue // a wholly empty trailing week
+		if sameDay(day, p.cursor) {
+			text = fmt.Sprintf("[%2d]", day.Day())
+			style = style.Bold(true)
 		}
-		rows = append(rows, b.String())
-	}
-	return strings.Join(rows, "\n")
+		return text, style
+	})
 }

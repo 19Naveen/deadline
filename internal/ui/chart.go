@@ -9,6 +9,7 @@ import (
 var sparkRunes = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 // heatRunes index 0 is "nothing happened"; 1..4 are increasing intensity.
+// The calendar shades a day's cell with 1..4 and draws a blank for 0.
 var heatRunes = []rune{'·', '▁', '▄', '▓', '█'}
 
 // Sparkline renders one block rune per value, scaled to the series max.
@@ -31,27 +32,6 @@ func Sparkline(values []int) string {
 		b.WriteRune(sparkRunes[1+(v*7)/max])
 	}
 	return b.String()
-}
-
-// Heatmap renders a grid of counts as one line per row.
-func Heatmap(grid [][]int) string {
-	max := 0
-	for _, row := range grid {
-		for _, v := range row {
-			if v > max {
-				max = v
-			}
-		}
-	}
-	lines := make([]string, 0, len(grid))
-	for _, row := range grid {
-		var b strings.Builder
-		for _, v := range row {
-			b.WriteRune(heatRunes[heatLevel(v, max)])
-		}
-		lines = append(lines, b.String())
-	}
-	return strings.Join(lines, "\n")
 }
 
 func heatLevel(v, max int) int {

@@ -16,6 +16,8 @@ const (
 	pageBoard page = iota
 	pageAnalytics
 	pageArchive
+	pageCalendar
+	pageCount
 )
 
 // AppModel is the root Bubble Tea model: it owns page switching, the help
@@ -24,6 +26,7 @@ type AppModel struct {
 	board     BoardModel
 	analytics AnalyticsModel
 	archive   ArchiveModel
+	calendar  CalendarModel
 	store     *task.Board
 
 	page     page
@@ -42,6 +45,7 @@ func NewApp(b *task.Board) AppModel {
 		board:     NewBoardModel(b),
 		analytics: NewAnalyticsModel(b),
 		archive:   NewArchiveModel(b),
+		calendar:  NewCalendarModel(b),
 		store:     b,
 		now:       time.Now,
 	}
@@ -67,6 +71,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.board.SetSize(msg.Width, msg.Height)
 		m.analytics.SetSize(msg.Width, msg.Height)
 		m.archive.SetSize(msg.Width, msg.Height)
+		m.calendar.SetSize(msg.Width, msg.Height)
 		return m, nil
 
 	case dirtyMsg:
@@ -121,7 +126,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch msg.String() {
 			case "tab":
-				m.page = (m.page + 1) % 3
+				m.page = (m.page + 1) % pageCount
 				return m, nil
 			case "?":
 				m.showHelp = !m.showHelp
@@ -138,6 +143,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case pageArchive:
 			var cmd tea.Cmd
 			m.archive, cmd = m.archive.Update(msg)
+			return m, cmd
+		case pageCalendar:
+			var cmd tea.Cmd
+			m.calendar, cmd = m.calendar.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -156,6 +165,8 @@ func (m AppModel) View() string {
 		body = m.analytics.View()
 	case pageArchive:
 		body = m.archive.View()
+	case pageCalendar:
+		body = m.calendar.View()
 	}
 	parts := []string{m.renderTabs(), body}
 	if m.saveErr != "" {
@@ -168,7 +179,7 @@ func (m AppModel) renderTabs() string {
 	active := lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Padding(0, 2)
 	inactive := MutedStyle.Copy().Padding(0, 2)
 
-	names := [3]string{"BOARD", "ANALYTICS", "ARCHIVE"}
+	names := [pageCount]string{"BOARD", "ANALYTICS", "ARCHIVE", "CALENDAR"}
 	tabs := make([]string, 0, len(names))
 	for i, n := range names {
 		if page(i) == m.page {
@@ -183,7 +194,7 @@ func (m AppModel) renderTabs() string {
 
 func (m AppModel) renderHelp() string {
 	rows := [][2]string{
-		{"tab", "cycle board → analytics → archive"},
+		{"tab", "cycle board → analytics → archive → calendar"},
 		{"ctrl+t", "toggle column / item focus"},
 		{"h l", "previous / next column"},
 		{"j k", "previous / next task (item focus)"},
@@ -198,6 +209,7 @@ func (m AppModel) renderHelp() string {
 		{"?", "toggle this help"},
 		{"q", "quit"},
 		{"", ""},
+		{"calendar", "every deadline on a month grid; h/l changes month, t back to today"},
 		{"deadlines", "green >3 days · amber ≤3 · red ≤1 · red ✗ overdue"},
 	}
 	lines := []string{TitleStyle.Render("KEYS"), ""}

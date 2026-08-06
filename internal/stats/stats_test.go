@@ -107,23 +107,6 @@ func TestStreakEmpty(t *testing.T) {
 	}
 }
 
-func TestHeatmapGridShapeAndPlacement(t *testing.T) {
-	// 30/07/2026 is a Thursday -> weekday row 3 (Mon=0).
-	tasks := []task.Task{done("a", ref.AddDate(0, 0, -20), ref)}
-	grid := HeatmapGrid(tasks, 4, ref)
-	if len(grid) != 7 {
-		t.Fatalf("rows = %d, want 7", len(grid))
-	}
-	for i, row := range grid {
-		if len(row) != 4 {
-			t.Fatalf("row %d has %d cols, want 4", i, len(row))
-		}
-	}
-	if grid[3][3] != 1 {
-		t.Errorf("grid[3][3] = %d, want 1 (Thursday of the last week)", grid[3][3])
-	}
-}
-
 func TestTimeInStatusWalksHistory(t *testing.T) {
 	created := ref.Add(-10 * time.Hour)
 	tk := task.Task{
@@ -216,5 +199,71 @@ func TestBlockedReportSortedLongestFirst(t *testing.T) {
 	}
 	if got[1].Title != "[Short]" || got[1].For != 1*time.Hour {
 		t.Errorf("got[1] = %+v, want {[Short] 1h}", got[1])
+	}
+}
+
+// dated builds an open task due at the given time.
+func dated(title string, due time.Time) task.Task {
+	return task.Task{Title: title, Status: task.StatusTodo, CreatedAt: ref, Deadline: &due}
+}
+
+func TestCompletionsByDayBucketsByCalendarDay(t *testing.T) {
+	day := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	tasks := []task.Task{
+		done("a", ref, day.Add(9*time.Hour)),
+		done("b", ref, day.Add(23*time.Hour)), // same day, much later
+		done("c", ref, day.AddDate(0, 0, -1)),
+		{Status: task.StatusTodo, CreatedAt: ref}, // never completed
+	}
+	got := CompletionsByDay(tasks, time.UTC)
+
+	if got[day] != 2 {
+		t.Errorf("28/07 = %d, want 2", got[day])
+	}
+	if got[day.AddDate(0, 0, -1)] != 1 {
+		t.Errorf("27/07 = %d, want 1", got[day.AddDate(0, 0, -1)])
+	}
+	if _, ok := got[day.AddDate(0, 0, 1)]; ok {
+		t.Error("29/07 is present, want empty days left out")
+	}
+}
+
+func TestDeadlinesByDayGroupsAndSkipsUndated(t *testing.T) {
+	day := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	tasks := []task.Task{
+		dated("[One]", day.Add(6*time.Hour)),
+		dated("[Two]", day.Add(20*time.Hour)),
+		dated("[Three]", day.AddDate(0, 0, 3)),
+		{Title: "[No deadline]", Status: task.StatusTodo},
+	}
+	got := DeadlinesByDay(tasks, time.UTC)
+
+	if len(got[day]) != 2 {
+		t.Errorf("12/08 has %d tasks, want 2", len(got[day]))
+	}
+	if len(got) != 2 {
+		t.Errorf("days = %d, want 2 (the undated task must not make a bucket)", len(got))
+	}
+}
+
+func TestByDeadlineSortsSoonestFirst(t *testing.T) {
+	late := ref.AddDate(0, 0, 10)
+	soon := ref.AddDate(0, 0, -2)
+	mid := ref.AddDate(0, 0, 1)
+	got := ByDeadline([]task.Task{
+		dated("[Late]", late),
+		{Title: "[No deadline]", Status: task.StatusTodo},
+		dated("[Soon]", soon),
+		dated("[Mid]", mid),
+	})
+
+	want := []string{"[Soon]", "[Mid]", "[Late]"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d tasks, want %d (undated ones dropped)", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].Title != w {
+			t.Errorf("position %d = %q, want %q", i, got[i].Title, w)
+		}
 	}
 }

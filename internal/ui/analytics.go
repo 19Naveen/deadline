@@ -13,8 +13,11 @@ import (
 
 const (
 	throughputDays = 14
-	heatmapWeeks   = 12
-	blockedTopN    = 5
+	// streakMonths is the most month grids the streak calendar shows; three
+	// cover about the same span as the 12-week heatmap it replaced, and fit
+	// a 90-column terminal.
+	streakMonths = 3
+	blockedTopN  = 5
 )
 
 // AnalyticsModel is the stats page. It has no keys of its own.
@@ -143,24 +146,32 @@ func (m AnalyticsModel) renderBlocked(tasks []task.Task, now time.Time) string {
 	return strings.Join(lines, "\n")
 }
 
+// renderStreak shows the run of days you finished something on real month
+// grids rather than an anonymous 12-week strip: the same span, but every
+// mark sits on a date you can name.
 func (m AnalyticsModel) renderStreak(tasks []task.Task, now time.Time) string {
 	current, longest := stats.Streak(tasks, now)
-	grid := stats.HeatmapGrid(tasks, heatmapWeeks, now)
+	byDay := stats.CompletionsByDay(tasks, now.Location())
 
-	heat := lipgloss.NewStyle().Foreground(AccentFor(task.StatusDone)).Render(Heatmap(grid))
-	labels := []string{"Mon", "   ", "Wed", "   ", "Fri", "   ", "Sun"}
-	rows := strings.Split(heat, "\n")
-	for i := range rows {
-		if i < len(labels) {
-			rows[i] = MutedStyle.Render(labels[i]) + " " + rows[i]
+	n := monthsAcross(m.width, streakMonths)
+	first := monthStart(now).AddDate(0, -(n - 1), 0)
+
+	// Scale the shading against the busiest day on screen, so a single
+	// completion still reads as a mark rather than as almost-nothing.
+	busiest := 0
+	for day, c := range byDay {
+		if !day.Before(first) && c > busiest {
+			busiest = c
 		}
 	}
 
 	return strings.Join([]string{
 		TitleStyle.Render("STREAK"),
 		fmt.Sprintf("current %s · longest %s", plural(current, "day"), plural(longest, "day")),
-		strings.Join(rows, "\n"),
-		MutedStyle.Render(fmt.Sprintf("last %d weeks, ending %s", heatmapWeeks, FormatDate(now))),
+		monthStrip(first, n, completionCell(byDay, busiest, now)),
+		MutedStyle.Render(fmt.Sprintf("%s%s%s%s more finished that day · underline is today, %s",
+			string(heatRunes[1]), string(heatRunes[2]), string(heatRunes[3]), string(heatRunes[4]),
+			FormatDate(now))),
 	}, "\n")
 }
 

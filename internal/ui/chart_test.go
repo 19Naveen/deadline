@@ -40,24 +40,6 @@ func TestSparklineEmpty(t *testing.T) {
 	}
 }
 
-func TestHeatmapRowsAndRunes(t *testing.T) {
-	grid := [][]int{
-		{0, 4},
-		{1, 0},
-	}
-	got := Heatmap(grid)
-	lines := strings.Split(got, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines = %d, want 2", len(lines))
-	}
-	if lines[0] != "·█" {
-		t.Errorf("line 0 = %q, want %q", lines[0], "·█")
-	}
-	if lines[1] != "▁·" {
-		t.Errorf("line 1 = %q, want %q", lines[1], "▁·")
-	}
-}
-
 func TestHBarFillsProportionally(t *testing.T) {
 	got := HBar("todo", 5, 10, 10)
 	if !strings.Contains(got, strings.Repeat("█", 5)) {
