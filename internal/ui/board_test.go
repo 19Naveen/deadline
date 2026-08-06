@@ -1307,3 +1307,81 @@ func TestMultiLineDescriptionKeepsACardOneLineTall(t *testing.T) {
 		t.Errorf("card does not mark the description as continued:\n%s", card)
 	}
 }
+
+// withDeadline is a one-task board whose task is due on the given day.
+func withDeadline(day time.Time) *task.Board {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[Task title]", "", &day, ref)
+	return b
+}
+
+func TestDetailPopupShowsTheDeadlineOnACalendar(t *testing.T) {
+	m := fixedClock(NewBoardModel(withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.Local))))
+	m.SetSize(120, 40)
+	out := stripANSI(press(m, "enter").View())
+
+	for _, want := range []string{"● 12/08/2026", "August 2026", "Mo  Tu  We", "[12]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail popup is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDetailPopupWithoutADeadlineHasNoCalendar(t *testing.T) {
+	m := fixedClock(NewBoardModel(seeded(t)))
+	m.SetSize(120, 40)
+	if out := stripANSI(press(m, "enter").View()); strings.Contains(out, "Mo  Tu  We") {
+		t.Errorf("a task with no deadline drew a calendar:\n%s", out)
+	}
+}
+
+// The calendar is the part that gives when the terminal is too short — the
+// popup must stay inside the frame either way.
+func TestDetailPopupNeverExceedsTerminalHeight(t *testing.T) {
+	for _, h := range []int{10, 14, 15, 18, 24, 40} {
+		b := withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.Local))
+		b.Tasks[0].Description = "one\ntwo\nthree"
+
+		a := NewApp(b)
+		a.now = func() time.Time { return ref }
+		a.board.now = func() time.Time { return ref }
+		upd, _ := a.Update(tea.WindowSizeMsg{Width: 110, Height: h})
+		upd, _ = upd.(AppModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+		a = upd.(AppModel)
+
+		if a.board.mode != modeDetail {
+			t.Fatalf("height=%d: mode = %v, want modeDetail", h, a.board.mode)
+		}
+		if got := lipgloss.Height(a.View()); got > h {
+			t.Errorf("height=%d: detail popup is %d rows tall, overflows by %d:\n%s", h, got, got-h, a.View())
+		}
+	}
+}
+
+// On a terminal too short for everything, the calendar goes before the
+// description does, and the description is clipped rather than overflowing.
+func TestDetailPopupClipsTheDescriptionBeforeOverflowing(t *testing.T) {
+	b := withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.Local))
+	b.Tasks[0].Description = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight"
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(110, 14)
+	out := stripANSI(press(m, "enter").View())
+
+	if strings.Contains(out, "Mo  Tu  We") {
+		t.Errorf("calendar survived on a 14-row terminal:\n%s", out)
+	}
+	if !strings.Contains(out, "one") || !strings.Contains(out, "…") {
+		t.Errorf("description was not clipped with an ellipsis:\n%s", out)
+	}
+	if strings.Contains(out, "eight") {
+		t.Errorf("clipped description still shows its last line:\n%s", out)
+	}
+	// The parts that never give up their rows.
+	for _, want := range []string{"[Task title]", "● 12/08/2026", "esc close"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("clipped popup dropped %q:\n%s", want, out)
+		}
+	}
+}

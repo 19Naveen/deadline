@@ -462,11 +462,36 @@ func descLine(desc string, width int) string {
 	return MutedStyle.Render(truncate(first, width))
 }
 
+// rowsHeight is how many terminal rows a slice of panel rows occupies —
+// lipgloss.Height of the joined block, except that no rows occupy none
+// (joining an empty slice would otherwise measure as one blank row).
+func rowsHeight(rows []string) int {
+	if len(rows) == 0 {
+		return 0
+	}
+	return lipgloss.Height(strings.Join(rows, "\n"))
+}
+
+// detailBudget is how many content rows the detail panel may use before it
+// overflows the terminal: the border costs two rows and View's own reserve
+// another two. A terminal size we have not been told yet is unbounded.
+func (m BoardModel) detailBudget() int {
+	if m.height <= 0 {
+		return 1 << 30
+	}
+	return m.height - 4
+}
+
 // renderDetail is the centred popup for the selected task: the full title and
-// description, wrapped rather than truncated, so a long task is readable
-// without opening the editor.
-// ponytail: no scrolling, a description past the terminal height overflows;
-// add a viewport if that ever bites.
+// description wrapped rather than truncated, and the deadline shown on the
+// same month calendar the form uses.
+//
+// There is no scrolling here, so on a terminal too short for everything the
+// panel gives things up in order rather than overflowing: the calendar goes
+// first, then the description is clipped to what is left with an ellipsis
+// marking the cut. The title, status, deadline line and hint always stay.
+// ponytail: clipping, not a viewport — add one if reading long descriptions
+// on a short terminal becomes a real habit.
 func (m BoardModel) renderDetail() string {
 	t, ok := m.selectedTask()
 	if !ok {
@@ -475,17 +500,39 @@ func (m BoardModel) renderDetail() string {
 	w := m.popupWidth()
 	wrap := lipgloss.NewStyle().Width(w)
 
-	rows := []string{
+	head := []string{
 		wrap.Copy().Bold(true).Foreground(AccentFor(t.Status)).Render(t.Title),
 		MutedStyle.Render(t.Status.Label()),
 	}
-	if t.Description != "" {
-		rows = append(rows, "", wrap.Copy().Foreground(ColText).Render(t.Description))
-	}
+	foot := []string{"", MutedStyle.Render("e edit · d delete · esc close")}
+
+	var when []string
 	if dl := RenderDeadline(t, m.now()); dl != "" {
-		rows = append(rows, "", dl)
+		when = []string{"", dl}
+		// The deadline's own month, the day bracketed and today green, so
+		// "how far off is this" reads at a glance instead of from date
+		// arithmetic. Anchored to now's zone, the zone RenderDeadline and
+		// DeadlineUrgency both work in.
+		cal := []string{"", newDatePicker(t.Deadline.In(m.now().Location())).View(m.now())}
+		if rowsHeight(head)+rowsHeight(when)+rowsHeight(cal)+rowsHeight(foot) <= m.detailBudget() {
+			when = append(when, cal...)
+		}
 	}
-	rows = append(rows, "", MutedStyle.Render("e edit · d delete · esc close"))
+
+	var desc []string
+	if t.Description != "" {
+		desc = append([]string{""},
+			strings.Split(wrap.Copy().Foreground(ColText).Render(t.Description), "\n")...)
+		room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(foot)
+		switch {
+		case room < 2: // not even a blank line and one line of text
+			desc = nil
+		case room < len(desc):
+			desc = append(desc[:room-1], MutedStyle.Render("…"))
+		}
+	}
+
+	rows := append(append(append(head, desc...), when...), foot...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
 
