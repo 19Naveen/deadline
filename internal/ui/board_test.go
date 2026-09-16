@@ -733,7 +733,7 @@ func TestParseDeadlineThenUrgencyIsNotOffByOneWestOfUTC(t *testing.T) {
 		t.Fatalf("parseDeadline returned %v", err)
 	}
 	tt := task.Task{Title: "[Task title]", Status: task.StatusTodo, CreatedAt: now, Deadline: deadline}
-	if got := task.DeadlineUrgency(tt, now); got != task.UrgencyUrgent {
+	if got := task.DeadlineUrgency(tt, now, task.StatusDone); got != task.UrgencyUrgent {
 		t.Errorf("urgency = %v, want UrgencyUrgent for a deadline due today in a negative-offset zone", got)
 	}
 }
@@ -802,8 +802,8 @@ func TestFormSavesAllThreeFields(t *testing.T) {
 	if got.Description != "[draft, review, send]" {
 		t.Errorf("Description = %q", got.Description)
 	}
-	if got.Deadline == nil || !got.Deadline.Equal(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("Deadline = %v, want 02/08/2026", got.Deadline)
+	if got.Deadline == nil || got.Deadline.Format("02/01/2006") != "02/08/2026" {
+		t.Errorf("Deadline = %v, want the 02/08/2026 calendar day in the local zone", got.Deadline)
 	}
 }
 
@@ -1317,7 +1317,9 @@ func withDeadline(day time.Time) *task.Board {
 }
 
 func TestDetailPopupShowsTheDeadlineOnACalendar(t *testing.T) {
-	m := fixedClock(NewBoardModel(withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.Local))))
+	// UTC midnight: the popup renders in now's zone (ref is UTC), so a
+	// local-midnight deadline would show the neighbouring day off-UTC.
+	m := fixedClock(NewBoardModel(withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC))))
 	m.SetSize(120, 40)
 	out := stripANSI(press(m, "enter").View())
 
@@ -1362,7 +1364,8 @@ func TestDetailPopupNeverExceedsTerminalHeight(t *testing.T) {
 // On a terminal too short for everything, the calendar goes before the
 // description does, and the description is clipped rather than overflowing.
 func TestDetailPopupClipsTheDescriptionBeforeOverflowing(t *testing.T) {
-	b := withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.Local))
+	// UTC midnight, matching the UTC test clock (see above).
+	b := withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC))
 	b.Tasks[0].Description = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight"
 
 	m := fixedClock(NewBoardModel(b))

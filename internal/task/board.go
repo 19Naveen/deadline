@@ -14,10 +14,45 @@ var ErrNotFound = errors.New("task not found")
 // rather than stored separately, so a move is a single field write.
 type Board struct {
 	Tasks []Task `json:"tasks"`
+	// Columns is the board's left-to-right column order. Empty means a file
+	// written before per-board columns existed, which reads as the personal
+	// preset; Statuses resolves that so callers never branch on it.
+	Columns []Status `json:"columns,omitempty"`
 
 	path  string // where Save writes; unexported so it stays out of the JSON
 	dirty bool   // true when there are unsaved mutations; unexported, not serialised
 }
+
+// Statuses returns the board's columns, defaulting to the personal preset
+// for files that predate per-board columns.
+func (b *Board) Statuses() []Status {
+	if len(b.Columns) > 0 {
+		return b.Columns
+	}
+	return Statuses
+}
+
+// DoneStatus is the board's terminal column: done on personal boards,
+// shipped on dev boards. Archiving, analytics and urgency all key off this,
+// never off a hard-coded status.
+func (b *Board) DoneStatus() Status {
+	cols := b.Statuses()
+	return cols[len(cols)-1]
+}
+
+// ColumnIndex is the column position of s, 0-based. Unknown statuses report
+// -1 so callers can tell "not on this board" apart from "first column".
+func (b *Board) ColumnIndex(s Status) int {
+	for i, c := range b.Statuses() {
+		if c == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// HasStatus reports whether s is a column on this board.
+func (b *Board) HasStatus(s Status) bool { return b.ColumnIndex(s) >= 0 }
 
 // Dirty reports whether the board has mutations not yet written by Save.
 func (b *Board) Dirty() bool { return b.dirty }

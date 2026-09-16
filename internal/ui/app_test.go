@@ -443,3 +443,33 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 		check("form + calendar open", a4)
 	}
 }
+
+// The tab bar names the pages on top; the way out is a footer hint on each
+// page, next to the keys that live there — never a page-specific wording.
+func TestTabsNamePagesOnTopWithFooterHints(t *testing.T) {
+	a := app(t)
+	out := stripANSI(a.View())
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[0], "BOARD") || !strings.Contains(lines[0], "CALENDAR") {
+		t.Errorf("first line is not the tab bar:\n%s", out)
+	}
+	if strings.Contains(out, "tab to switch") {
+		t.Errorf("tab bar still carries the hint:\n%s", out)
+	}
+	if !strings.Contains(out, "m grab · tab switch · ? help") {
+		t.Errorf("board footer is missing the tab switch hint:\n%s", out)
+	}
+	for _, stale := range []string{"tab analytics", "tab board", "tab back to the board"} {
+		if strings.Contains(out, stale) {
+			t.Errorf("board view still says %q:\n%s", stale, out)
+		}
+	}
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.(AppModel).Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.(AppModel).Update(tea.KeyMsg{Type: tea.KeyTab})
+	out = stripANSI(m.(AppModel).View())
+	if !strings.Contains(out, "t today · tab switch") {
+		t.Errorf("calendar footer is missing the tab switch hint:\n%s", out)
+	}
+}

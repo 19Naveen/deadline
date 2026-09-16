@@ -154,7 +154,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the tab bar plus the active page, or the help overlay.
+// View renders the tab bar above the active page, or the help overlay.
+// The bar names the pages; the way out is a footer hint on each page
+// ("tab switch"), next to the keys that live there.
 func (m AppModel) View() string {
 	if m.showHelp {
 		return m.renderHelp()
@@ -188,7 +190,6 @@ func (m AppModel) renderTabs() string {
 		}
 		tabs = append(tabs, inactive.Render(n))
 	}
-	tabs = append(tabs, MutedStyle.Render("  tab to switch"))
 	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 

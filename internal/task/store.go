@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultPath is the per-user tasks file, e.g. ~/.config/gotodo/tasks.json.
@@ -36,24 +37,66 @@ func Load(path string) (*Board, error) {
 	if err := json.Unmarshal(data, b); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	// A hand-edited or future-version file may carry a status this build
-	// doesn't recognise. Coerce it to todo instead of dropping the task or
-	// erroring, so it stays reachable and the user can see and fix it.
-	for i := range b.Tasks {
-		if !isKnownStatus(b.Tasks[i].Status) {
-			b.Tasks[i].Status = StatusTodo
-		}
+	if err := b.normalize(); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return b, nil
 }
 
-func isKnownStatus(s Status) bool {
-	for _, known := range Statuses {
-		if s == known {
-			return true
+// normalize migrates and validates a freshly unmarshalled board. Files
+// written before review/testing merged into testing-review are upgraded
+// losslessly (status and transition history); files whose columns match
+// neither known schema are rejected rather than guessed at. Genuinely
+// unknown task statuses still coerce to the first column so a hand-edited
+// task stays reachable — the same rule the pre-column format used.
+func (b *Board) normalize() error {
+	for i := range b.Tasks {
+		if b.Tasks[i].Status == Status("review") || b.Tasks[i].Status == Status("testing") {
+			b.Tasks[i].Status = StatusTestingReview
+		}
+		for j := range b.Tasks[i].History {
+			if b.Tasks[i].History[j].From == Status("review") || b.Tasks[i].History[j].From == Status("testing") {
+				b.Tasks[i].History[j].From = StatusTestingReview
+			}
+			if b.Tasks[i].History[j].To == Status("review") || b.Tasks[i].History[j].To == Status("testing") {
+				b.Tasks[i].History[j].To = StatusTestingReview
+			}
 		}
 	}
-	return false
+	// The pre-merge six-column dev layout upgrades to the five-column one.
+	legacyDev := []Status{StatusTodo, StatusInDev, Status("review"), Status("testing"), StatusBlocked, StatusShipped}
+	if equalStatuses(b.Columns, legacyDev) {
+		b.Columns = append([]Status(nil), DevColumns...)
+	}
+	if len(b.Columns) > 0 && !equalStatuses(b.Columns, PersonalColumns) && !equalStatuses(b.Columns, DevColumns) {
+		return fmt.Errorf("unknown columns %q (want personal or dev layout)", columnNames(b.Columns))
+	}
+	for i := range b.Tasks {
+		if !b.HasStatus(b.Tasks[i].Status) {
+			b.Tasks[i].Status = b.Statuses()[0]
+		}
+	}
+	return nil
+}
+
+func equalStatuses(a, b []Status) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func columnNames(cols []Status) string {
+	names := make([]string, 0, len(cols))
+	for _, c := range cols {
+		names = append(names, string(c))
+	}
+	return strings.Join(names, ", ")
 }
 
 // Save writes the board atomically: temp file first, then rename. Each
