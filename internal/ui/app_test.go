@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -471,5 +472,76 @@ func TestTabsNamePagesOnTopWithFooterHints(t *testing.T) {
 	out = stripANSI(m.(AppModel).View())
 	if !strings.Contains(out, "t today · tab switch") {
 		t.Errorf("calendar footer is missing the tab switch hint:\n%s", out)
+	}
+}
+
+// An agent writing headless while the board is open appears on the next
+// refresh tick: the user watches it land with no keypress.
+func TestRefreshTickPicksUpExternalWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	b := &task.Board{}
+	b.SetPath(path)
+	b.Add("[Mine]", "", nil, ref)
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp(b)
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = m.(AppModel)
+
+	agent, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Add("[Agent]", "", nil, ref)
+	if err := agent.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = a.Update(refreshTickMsg(time.Now()))
+	out := stripANSI(m.(AppModel).View())
+	if !strings.Contains(out, "[Agent]") {
+		t.Errorf("open board is missing the agent's card after a tick:\n%s", out)
+	}
+}
+
+// A tick never yanks unsaved keystrokes away: a dirty board skips the
+// refresh and converges on a later tick once saved.
+func TestRefreshTickSkipsDirtyBoard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	b := &task.Board{}
+	b.SetPath(path)
+	b.Add("[Mine]", "", nil, ref)
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp(b)
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = m.(AppModel)
+
+	a.store.Add("[Unsaved]", "", nil, ref)
+	agent, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Add("[Agent]", "", nil, ref)
+	if err := agent.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ = a.Update(refreshTickMsg(time.Now()))
+	out := stripANSI(m.(AppModel).View())
+	if strings.Contains(out, "[Agent]") {
+		t.Errorf("dirty board picked up external writes mid-typing:\n%s", out)
+	}
+	if !strings.Contains(out, "[Unsaved]") {
+		t.Errorf("dirty board lost its own unsaved card:\n%s", out)
+	}
+
+	m, _ = m.(AppModel).Update(dirtyMsg{})
+	m, _ = m.(AppModel).Update(refreshTickMsg(time.Now()))
+	out = stripANSI(m.(AppModel).View())
+	if !strings.Contains(out, "[Agent]") || !strings.Contains(out, "[Unsaved]") {
+		t.Errorf("saved board is missing a side after converging:\n%s", out)
 	}
 }

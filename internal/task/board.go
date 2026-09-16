@@ -54,8 +54,19 @@ func (b *Board) ColumnIndex(s Status) int {
 // HasStatus reports whether s is a column on this board.
 func (b *Board) HasStatus(s Status) bool { return b.ColumnIndex(s) >= 0 }
 
+// SetColumns replaces the board's column layout (used when initialising a
+// new board file) and marks the board dirty. Direct assignment would bypass
+// dirty tracking and a later Save would skip the write.
+func (b *Board) SetColumns(cols []Status) {
+	b.Columns = append([]Status(nil), cols...)
+	b.dirty = true
+}
+
 // Dirty reports whether the board has mutations not yet written by Save.
 func (b *Board) Dirty() bool { return b.dirty }
+
+// Path reports the file Save writes to ("" when unset).
+func (b *Board) Path() string { return b.path }
 
 // Add appends a new todo task and returns a pointer into b.Tasks. The
 // pointer is only valid until the next Add — take the ID off it, never

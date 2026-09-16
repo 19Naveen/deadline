@@ -150,22 +150,6 @@ func findProjectBoard() (string, error) {
 	}
 }
 
-// loadLocked takes the board's writer lock and loads it. Mutating commands
-// hold the lock across modify-save so parallel agents cannot drop each
-// other's tasks; the caller must Close the lock.
-func loadLocked(path string) (*task.Board, *task.BoardLock, error) {
-	lock, err := task.LockBoard(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	board, err := task.Load(path)
-	if err != nil {
-		lock.Close()
-		return nil, nil, err
-	}
-	return board, lock, nil
-}
-
 // runInit creates ./.deadline/board.json with the dev columns. One project,
 // one board: if this directory is already inside an initialised project,
 // that board is reused instead of nesting a new one. (A nested board is
@@ -193,16 +177,15 @@ func runInit(args []string) error {
 		return nil
 	}
 	path := filepath.Join(cwd, projectDirName, projectBoardFile)
-	board, lock, err := loadLocked(path)
+	board, err := task.Load(path)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
 	if len(board.Columns) > 0 || len(board.Tasks) > 0 {
 		fmt.Printf("already initialised: %s\n", path)
 		return nil
 	}
-	board.Columns = task.DevColumns
+	board.SetColumns(task.DevColumns)
 	if err := board.Save(); err != nil {
 		return err
 	}
@@ -240,14 +223,13 @@ func ensureGitignored(dir string) {
 	fmt.Println("added .deadline/ to .gitignore")
 }
 
-// runTUI is the interactive board: lock the board for the session, tidy,
-// run, and save on change.
+// runTUI is the interactive board: tidy, run, and save on change. Saves
+// merge whatever agents wrote while the board was open.
 func runTUI(path string) error {
-	board, lock, err := loadLocked(path)
+	board, err := task.Load(path)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
 
 	// Tidy the board before the first frame: anything in the terminal
 	// column for two weeks belongs in the archive, not on the board.
@@ -292,11 +274,10 @@ func runAdd(path string, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (%s)", fs.Arg(0), addUsage)
 	}
-	board, lock, err := loadLocked(path)
+	board, err := task.Load(path)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
 	board.SweepArchive(time.Now())
 
 	title := strings.TrimSpace(args[0])
@@ -391,11 +372,10 @@ func runMove(path string, args []string) error {
 	if len(args) != 2 {
 		return errors.New("usage: gotodo move <id> <status>")
 	}
-	board, lock, err := loadLocked(path)
+	board, err := task.Load(path)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
 	board.SweepArchive(time.Now())
 
 	t, err := resolveID(board, args[0])
@@ -408,11 +388,9 @@ func runMove(path string, args []string) error {
 	}
 	from := t.Status
 	if from == to {
-		// No-op move, but the sweep above may still have work to keep.
-		if board.Dirty() {
-			if err := board.Save(); err != nil {
-				return err
-			}
+		// No-op move, but Save still merges anything written concurrently.
+		if err := board.Save(); err != nil {
+			return err
 		}
 		fmt.Printf("%s %s is already in %s\n", shortID(t.ID), t.Title, to)
 		return nil

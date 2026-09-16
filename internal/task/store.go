@@ -99,12 +99,51 @@ func columnNames(cols []Status) string {
 	return strings.Join(names, ", ")
 }
 
-// Save writes the board atomically: temp file first, then rename. Each
-// writer gets a unique temp file (via os.CreateTemp) so two concurrent
-// processes never race over the same intermediate name.
+// mergeDisk pulls in tasks written to the file since this board was
+// loaded. Callers must hold the board lock. A missing file means a fresh
+// board with nothing to merge; this session's tasks always win over the
+// disk copy on ID conflicts.
+func (b *Board) mergeDisk() error {
+	disk, err := Load(b.path)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(b.Tasks))
+	for _, t := range b.Tasks {
+		known[t.ID] = true
+	}
+	for _, t := range disk.Tasks {
+		if !known[t.ID] {
+			b.Tasks = append(b.Tasks, t)
+			b.dirty = true
+		}
+	}
+	return nil
+}
+
+// Save merges concurrent writers and persists the board atomically: temp
+// file first, then rename. It takes a brief exclusive lock, reloads the
+// file, and pulls in any tasks written since this board was loaded — so an
+// agent logging while the TUI is open (or two agents at once) never drops
+// the other's cards. Tasks this session changed win over the disk copy;
+// tasks only on disk are appended in disk order. Each writer still gets a
+// unique temp file (via os.CreateTemp) so concurrent replacements never
+// race over the same intermediate name. A clean board with nothing new on
+// disk writes nothing, so read-only sessions stay read-only.
 func (b *Board) Save() error {
 	if b.path == "" {
 		return errors.New("board has no path; call SetPath or Load first")
+	}
+	lock, err := LockBoard(b.path)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := b.mergeDisk(); err != nil {
+		return err
+	}
+	if !b.dirty {
+		return nil
 	}
 	dir := filepath.Dir(b.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

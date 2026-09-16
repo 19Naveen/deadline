@@ -230,7 +230,7 @@ Two boards, never mixed. Outside any project, `gotodo` opens your personal board
 gotodo -file ./work.json
 ```
 
-Every change writes through a temporary file and a rename, so an interrupted write cannot leave you with half a board. A session where you changed nothing does not write at all, which matters if you ever have two copies open.
+Every change writes through a temporary file and a rename, so an interrupted write cannot leave you with half a board. A session where you changed nothing does not write at all. Concurrent writers merge by task under a brief file lock, so an agent logging while your board is open never drops your cards — and vice versa; two sessions editing the same card resolve last-writer-wins.
 
 ---
 
@@ -265,7 +265,7 @@ gotodo move 3fa1c9e2 testing-review          # any unique id prefix works
 
 The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). A bare `gotodo -h`, or `init`, `add` or `list` with `-h`, prints help without changing anything.
 
-The installer drops a `deadline` skill (`skills/deadline/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories, so agents discover this workflow on their own. The whole skill is ~200 words — it stays out of the way until needed.
+The installer drops a `deadline` skill (`skills/deadline/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories, so agents discover this workflow on their own. An open board picks up agent writes within a couple of seconds — no restart needed. The whole skill is ~200 words — it stays out of the way until needed.
 
 ---
 
@@ -292,7 +292,7 @@ Not from inside the app. Edit the JSON and drop the `"archived": true` line.
 Long enough that a finished task is still there when someone asks about it. Short enough that Done does not become a scrapbook.
 
 **Does it sync?**
-No. It is one file. Put it in a synced folder if you want it on two machines, but two copies open at once will overwrite each other.
+No. It is one file. Put it in a synced folder if you want it on two machines. Two sessions open at once merge by task instead of overwriting each other, with the later save winning any card both touched.
 
 **Why does it say my terminal is too narrow?**
 Four columns and a date need 80 columns (about 100 for a five-column project board). Below that it tells you, instead of drawing a board that overlaps itself. Analytics and Archive are single-column and stay readable at any width.

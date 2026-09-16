@@ -23,4 +23,4 @@ Columns: `todo, indev, testing-review, blocked, shipped`.
 
 - Log each work item with `add` before starting it, then `move` it along: `todo → indev → testing-review → shipped`.
 - Park stuck items in `blocked` with the reason in the description; move back to `indev` when unblocked.
-- Bare `gotodo` opens the interactive TUI — never run that here; headless commands only.
+- Bare `gotodo` opens the interactive TUI — never run that here; headless commands only. The human sees your writes live in their open board.
