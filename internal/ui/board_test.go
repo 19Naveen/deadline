@@ -316,6 +316,66 @@ func TestDeleteCancelledByN(t *testing.T) {
 	}
 }
 
+// The reported bug end to end: a card in a dev column, deleted with d/y,
+// must stay deleted after the save and the next load — the merge step in
+// Save used to resurrect it from the on-disk copy.
+func TestDevBoardDeleteSurvivesSaveReload(t *testing.T) {
+	path := t.TempDir() + "/board.json"
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetColumns(task.DevColumns)
+	drop := b.Add("[Drop]", "", nil, ref).ID
+	if err := b.Move(drop, task.StatusTestingReview, ref); err != nil {
+		t.Fatal(err)
+	}
+	keep := b.Add("[Keep]", "", nil, ref).ID
+	if err := b.Move(keep, task.StatusInDev, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh session, the way the TUI opens the board.
+	fresh, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(fresh))
+	m = press(m, "l", "l") // todo -> indev -> testing-review
+	if got, ok := m.selectedTask(); !ok || got.ID != drop {
+		t.Fatalf("selected = %+v, want the testing-review card", got)
+	}
+	m = press(m, "d")
+	if m.mode != modeConfirm {
+		t.Fatalf("mode = %v, want modeConfirm", m.mode)
+	}
+	var cmd tea.Cmd
+	m, cmd = m.Update(key("y"))
+	if cmd == nil {
+		t.Fatal("confirm returned a nil cmd, want the dirty save trigger")
+	}
+	if _, ok := cmd().(dirtyMsg); !ok {
+		t.Errorf("cmd produced %T, want dirtyMsg", cmd())
+	}
+	if len(m.board.Tasks) != 1 {
+		t.Fatalf("Tasks = %d after confirming, want 1", len(m.board.Tasks))
+	}
+	// The dirty path: AppModel would Save here, then a reopen must agree.
+	if err := m.board.Save(); err != nil {
+		t.Fatal(err)
+	}
+	re, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(re.Tasks) != 1 || re.Tasks[0].ID != keep {
+		t.Fatalf("reloaded = %+v, want only the kept card", re.Tasks)
+	}
+}
+
 func TestGrabMoveAndDrop(t *testing.T) {
 	b := &task.Board{}
 	b.Add("[Task title]", "", nil, ref)

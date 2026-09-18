@@ -21,6 +21,12 @@ type Board struct {
 
 	path  string // where Save writes; unexported so it stays out of the JSON
 	dirty bool   // true when there are unsaved mutations; unexported, not serialised
+	// deleted is the set of task IDs removed by Delete this session.
+	// mergeDisk consults it so a deleted task is not re-appended from the
+	// disk copy at Save time (which would resurrect every delete).
+	// Unexported, never serialised; IDs are never reused, so entries stay
+	// valid for the session's lifetime.
+	deleted map[string]struct{}
 }
 
 // Statuses returns the board's columns, defaulting to the personal preset
@@ -124,16 +130,36 @@ func (b *Board) Edit(id, title, description string, deadline *time.Time, now tim
 	return nil
 }
 
-// Delete removes a task permanently.
+// Delete removes a task permanently. The ID is recorded as a tombstone so a
+// later Save does not merge it back from the on-disk copy.
 func (b *Board) Delete(id string) error {
 	for i := range b.Tasks {
 		if b.Tasks[i].ID == id {
 			b.Tasks = append(b.Tasks[:i], b.Tasks[i+1:]...)
+			if b.deleted == nil {
+				b.deleted = make(map[string]struct{})
+			}
+			b.deleted[id] = struct{}{}
 			b.dirty = true
 			return nil
 		}
 	}
 	return ErrNotFound
+}
+
+// CarryTombstonesFrom copies the deleted-ID tombstones from prev onto b, so
+// a wholesale reload (live refresh) does not lose track of this session's
+// deletes. Call before replacing *b with a freshly loaded board.
+func (b *Board) CarryTombstonesFrom(prev *Board) {
+	if len(prev.deleted) == 0 {
+		return
+	}
+	if b.deleted == nil {
+		b.deleted = make(map[string]struct{}, len(prev.deleted))
+	}
+	for id := range prev.deleted {
+		b.deleted[id] = struct{}{}
+	}
 }
 
 // ByStatus returns the non-archived tasks in one column, in insertion order.

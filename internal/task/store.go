@@ -113,6 +113,9 @@ func (b *Board) mergeDisk() error {
 		known[t.ID] = true
 	}
 	for _, t := range disk.Tasks {
+		if _, gone := b.deleted[t.ID]; gone {
+			continue // deleted this session: never merge back
+		}
 		if !known[t.ID] {
 			b.Tasks = append(b.Tasks, t)
 			b.dirty = true

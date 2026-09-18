@@ -118,8 +118,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.board.mode == modeNormal && !m.store.Dirty() {
 			if changed, _ := m.boardChanged(); changed {
 				// Clean means memory holds nothing the disk lacks, so a
-				// wholesale reload drops nothing of ours.
+				// wholesale reload drops nothing of ours. Tombstones are
+				// carried over so a concurrently re-saved deleted task is
+				// not merged back on the next Save.
 				if fresh, err := task.Load(m.store.Path()); err == nil {
+					fresh.CarryTombstonesFrom(m.store)
 					*m.store = *fresh
 					m.board.clampSelection()
 					m.noteBoardStat()

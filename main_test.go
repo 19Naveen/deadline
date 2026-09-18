@@ -138,6 +138,125 @@ func TestAddRejectsFlagTitle(t *testing.T) {
 	}
 }
 
+func TestAddValidationErrorsWriteNothing(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	bad := [][]string{
+		{"add", "   "}, // blank title
+		{"add", "[Bad date]", "-deadline", "yes"},        // garbage deadline
+		{"add", "[Bad date]", "-deadline", "2026-08-04"}, // ISO, not DD/MM/YYYY
+		{"add", "[Bad col]", "-status", "qa"},            // unknown column
+		{"add", "[Extra]", "trailing"},                   // stray positional
+	}
+	// Note: bare `add` prints usage and exits zero by design (see
+	// TestHelpExitsZero), so it is not an error case.
+	for _, argv := range bad {
+		if err := run(argv); err == nil {
+			t.Errorf("run(%q) = nil, want an error", argv)
+		}
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Tasks) != 0 {
+		t.Errorf("tasks = %d after rejected adds, want 0", len(b.Tasks))
+	}
+}
+
+func TestMoveErrorsAndNoOp(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "[Mover]"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := b.Tasks[0].ID
+	if err := run([]string{"move", "zzz", "indev"}); err == nil {
+		t.Error("move(unknown id) = nil, want an error")
+	}
+	if err := run([]string{"move", id[:8]}); err == nil {
+		t.Error("move(missing status) = nil, want a usage error")
+	}
+	// Same-status move is a no-op that still succeeds.
+	out := captureStdout(t, func() {
+		if err := run([]string{"move", id[:8], "todo"}); err != nil {
+			t.Fatalf("move(same status) = %v, want nil", err)
+		}
+	})
+	if !strings.Contains(out, "already in") {
+		t.Errorf("move(same status) printed %q, want an already-in note", out)
+	}
+	re, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(re.Tasks[0].History) != 0 {
+		t.Errorf("history = %+v after a no-op move, want none", re.Tasks[0].History)
+	}
+}
+
+func TestListOutput(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := run([]string{"list"}); err != nil {
+			t.Fatalf("list = %v, want nil", err)
+		}
+	})
+	if strings.TrimSpace(out) != "no tasks" {
+		t.Errorf("list(empty) = %q, want %q", out, "no tasks")
+	}
+	if err := run([]string{"add", "[Dated]", "-deadline", "04/08/2026", "-status", "blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "[Plain]", "-status", "todo"}); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() {
+		if err := run([]string{"list", "-status", "blocked"}); err != nil {
+			t.Fatalf("list = %v, want nil", err)
+		}
+	})
+	if !strings.Contains(out, "[blocked] [Dated]") || !strings.Contains(out, "due 04/08/2026") {
+		t.Errorf("list(-status blocked) = %q, want the dated blocked card", out)
+	}
+	if strings.Contains(out, "[Plain]") {
+		t.Errorf("list(-status blocked) = %q, want the todo card filtered out", out)
+	}
+	if err := run([]string{"list", "-status", "qa"}); err == nil {
+		t.Error("list(bad status) = nil, want an error")
+	}
+}
+
+func TestUnknownCommandErrors(t *testing.T) {
+	if err := run([]string{"delete", "abc"}); err == nil {
+		t.Error("run(delete) = nil, want an unknown-command error")
+	} else if !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("run(delete) error = %q, want an unknown-command message", err)
+	}
+}
+
 func TestAddKeepsLocalCalendarDate(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
