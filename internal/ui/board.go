@@ -59,6 +59,10 @@ type BoardModel struct {
 	grabID   string      // set while in modeMove
 	grabFrom task.Status // original column of the grabbed task
 
+	// detailScroll is the scroll offset into the detail popup's description
+	// section, in wrapped rows. Reset whenever another card is opened.
+	detailScroll int
+
 	now func() time.Time // injectable clock; tests pin it
 
 	width      int
@@ -83,9 +87,11 @@ func NewBoardModel(b *task.Board) BoardModel {
 	m.deadline = line("DD/MM/YYYY (optional)", 10)
 
 	m.desc = textarea.New()
-	m.desc.Placeholder = "description (optional) · ctrl+j for a new line"
-	m.desc.CharLimit = 500
-	m.desc.Prompt = "› "
+	m.desc.Placeholder = "Write details, context, or Markdown…"
+	m.desc.CharLimit = 10000
+	// The field label already marks focus. A repeated arrow on every textarea
+	// row looks like a list, so keep a quiet two-column writing gutter.
+	m.desc.Prompt = "  "
 	m.desc.ShowLineNumbers = false
 	// Enter must reach updateInput to save the task, so the newline moves to
 	// ctrl+j. Terminals send 0x0A for ctrl+j and 0x0D for enter, so the two
@@ -104,12 +110,12 @@ func (m *BoardModel) SetSize(w, h int) {
 const (
 	// popupMaxWidth caps the centred detail/form panel: past this a line of
 	// description is too long to read comfortably.
-	popupMaxWidth = 64
-	// labelWidth is the form's left gutter, wide enough for "Description".
-	labelWidth = 12
-	// descRows is how many rows of the description are visible at once; the
-	// textarea scrolls past that.
-	descRows = 4
+	popupMaxWidth = 72
+	// The description editor grows with the terminal but stays bounded so the
+	// surrounding fields remain visible. It scrolls beyond these rows.
+	descDefaultRows = 8
+	descMaxRows     = 12
+	descMinRows     = 3
 )
 
 // popupWidth is the content width of the centred panels, leaving a margin so
@@ -132,7 +138,7 @@ func (m BoardModel) popupWidth() int {
 // sizeForm fits the three fields inside the popup, so a long value scrolls
 // inside its own box instead of stretching the panel past the terminal.
 func (m *BoardModel) sizeForm() {
-	inner := m.popupWidth() - labelWidth - 2 // 2 for the panel's own padding
+	inner := m.popupWidth() - 2 // panel's one-column padding on each side
 	if inner < 10 {
 		inner = 10
 	}
@@ -150,23 +156,28 @@ func (m *BoardModel) sizeForm() {
 // — the date can still be typed. Callers must re-run this (via sizeForm)
 // whenever the height or the picker changes.
 func (m BoardModel) formRows() (rows int, calendar bool) {
-	rows, calendar = descRows, m.picker.open
+	rows, calendar = descDefaultRows, m.picker.open
 	if m.height <= 0 {
 		return rows, calendar
 	}
-	fixed := 8 // 2 page rows + 2 border + heading + title + deadline + hint
+	// Content budget: one AppModel tab row and the panel's two border rows.
+	budget := m.height - 3
+	// Heading, divider, two title rows, two spacers, description label,
+	// two deadline rows, footer divider and footer hint.
+	fixed := 11
 	if m.err != "" {
 		fixed++
 	}
 	cal := 0
 	if calendar {
-		cal = lipgloss.Height(m.picker.View(m.now())) + 3 // 2 blank rows + its hint
+		cal = lipgloss.Height(m.picker.View(m.now())) + 2 // blank row + hint
 	}
-	if m.height-fixed-cal < 1 {
+	if budget-fixed-cal < descMinRows {
 		calendar, cal = false, 0
 	}
-	if spare := m.height - fixed - cal; spare < rows {
-		rows = spare
+	rows = budget - fixed - cal
+	if rows > descMaxRows {
+		rows = descMaxRows
 	}
 	if rows < 1 {
 		rows = 1
@@ -480,32 +491,44 @@ func (m BoardModel) detailBudget() int {
 	if m.height <= 0 {
 		return 1 << 30
 	}
-	return m.height - 4
+	// AppModel contributes one tab row and the panel contributes two border
+	// rows. Unlike the board there is no footer outside the panel.
+	return m.height - 3
 }
 
-// renderDetail is the centred popup for the selected task: the full title and
-// description wrapped rather than truncated, and the deadline shown on the
-// same month calendar the form uses.
+// renderDetail is the centred popup for the selected task: title and status
+// on top, then the description as a labelled, scrollable section (markdown
+// subset, see renderMarkdown), then the deadline on the same month calendar
+// the form uses.
 //
-// There is no scrolling here, so on a terminal too short for everything the
-// panel gives things up in order rather than overflowing: the calendar goes
-// first, then the description is clipped to what is left with an ellipsis
-// marking the cut. The title, status, deadline line and hint always stay.
-// ponytail: clipping, not a viewport — add one if reading long descriptions
-// on a short terminal becomes a real habit.
+// The description never floods the panel: it is windowed to the rows left
+// over by everything else, with a stable `first–last / total` counter and
+// j/k scrolling when it overflows. A short body renders in full.
+// There is no scrolling here beyond that window, so on a terminal too short
+// for everything the panel gives things up in order rather than overflowing:
+// the calendar goes first, then the description section is dropped once it
+// cannot fit even a label and one row. The title, status, deadline line and
+// hint always stay.
 func (m BoardModel) renderDetail() string {
 	t, ok := m.selectedTask()
 	if !ok {
 		return ""
 	}
 	w := m.popupWidth()
-	wrap := lipgloss.NewStyle().Width(w)
+	// ColumnStyle's one-column padding on each side comes out of Width.
+	// Rendering at w directly makes exact-width rows wrap by two columns.
+	contentWidth := w - 2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	wrap := lipgloss.NewStyle().Width(contentWidth)
+	title := strings.Join(strings.Fields(t.Title), " ")
 
 	head := []string{
-		wrap.Copy().Bold(true).Foreground(AccentFor(t.Status)).Render(t.Title),
-		MutedStyle.Render(t.Status.Label()),
+		wrap.Copy().Bold(true).Foreground(ColText).Render(title),
+		detailMetaLine(t, m.now()),
+		MutedStyle.Render(strings.Repeat("─", contentWidth)),
 	}
-	foot := []string{"", MutedStyle.Render("e edit · d delete · esc close")}
 
 	var when []string
 	if dl := RenderDeadline(t, m.now(), m.board.DoneStatus()); dl != "" {
@@ -515,26 +538,124 @@ func (m BoardModel) renderDetail() string {
 		// arithmetic. Anchored to now's zone, the zone RenderDeadline and
 		// DeadlineUrgency both work in.
 		cal := []string{"", newDatePicker(t.Deadline.In(m.now().Location())).View(m.now())}
-		if rowsHeight(head)+rowsHeight(when)+rowsHeight(cal)+rowsHeight(foot) <= m.detailBudget() {
+		if rowsHeight(head)+rowsHeight(when)+rowsHeight(cal)+rowsHeight(detailFoot(false, contentWidth)) <= m.detailBudget() {
 			when = append(when, cal...)
 		}
 	}
 
 	var desc []string
-	if t.Description != "" {
-		desc = append([]string{""},
-			strings.Split(wrap.Copy().Foreground(ColText).Render(t.Description), "\n")...)
-		room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(foot)
-		switch {
-		case room < 2: // not even a blank line and one line of text
-			desc = nil
-		case room < len(desc):
-			desc = append(desc[:room-1], MutedStyle.Render("…"))
-		}
+	scrollable := false
+	if body := m.detailBodyLines(t, contentWidth); len(body) > 0 {
+		room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(detailFoot(false, contentWidth))
+		desc, scrollable = m.detailDescSection(body, room, contentWidth)
 	}
 
+	foot := detailFoot(scrollable, contentWidth)
 	rows := append(append(append(head, desc...), when...), foot...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
+}
+
+// detailFoot is the popup's hint footer. The scroll hint only appears when
+// the description actually overflows, so short cards read exactly as before.
+func detailFoot(scrollable bool, width int) []string {
+	hints := []string{detailKey("e", "Edit"), detailKey("d", "Delete"), detailKey("esc", "Close")}
+	if scrollable {
+		hints = append([]string{detailKey("j/k", "Scroll")}, hints...)
+	}
+	return []string{
+		MutedStyle.Render(strings.Repeat("─", width)),
+		strings.Join(hints, MutedStyle.Render("   ")),
+	}
+}
+
+// detailKey renders one compact footer action: an accent key and muted verb.
+func detailKey(key, action string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Render(key) +
+		MutedStyle.Render(" "+action)
+}
+
+// detailMetaLine is the muted line under the title: status, age, and how
+// many columns the card has travelled. Zero-value segments are omitted, so
+// a fresh card stays a short `TODO · created 0m ago`.
+func detailMetaLine(t task.Task, now time.Time) string {
+	var parts []string
+	if age := now.Sub(t.CreatedAt); age >= 0 {
+		parts = append(parts, "created "+FormatDuration(age)+" ago")
+	}
+	if t.UpdatedAt.After(t.CreatedAt.Add(time.Minute)) {
+		if age := now.Sub(t.UpdatedAt); age >= 0 {
+			parts = append(parts, "updated "+FormatDuration(age)+" ago")
+		}
+	}
+	if n := len(t.History); n == 1 {
+		parts = append(parts, "1 move")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("%d moves", n))
+	}
+	meta := ""
+	if len(parts) > 0 {
+		meta = MutedStyle.Render("  " + strings.Join(parts, " · "))
+	}
+	return HeaderStyle(t.Status).Render(t.Status.Label()) + meta
+}
+
+// detailBodyLines wraps and styles the task's description for the popup:
+// one display row per entry, each fitting w columns. Nil when the task has
+// no description, in which case the whole section is omitted.
+func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
+	if t.Description == "" {
+		return nil
+	}
+	return strings.Split(renderMarkdown(t.Description, w), "\n")
+}
+
+// detailMaxBodyRows caps the description window even when the terminal
+// could fit more: a tall screen would otherwise show the whole wall of
+// text the windowing was built to tame. j/k reads past it.
+const detailMaxBodyRows = 10
+
+// detailDescSection windows body into room rows: a DESCRIPTION label plus as
+// many rows as fit, with ▲/▼ indicators when rows hide above or below. It
+// reports whether any rows overflow, which decides the footer's scroll hint.
+// A room too small for even a label and one row drops the section entirely.
+func (m BoardModel) detailDescSection(body []string, room, width int) (rows []string, scrollable bool) {
+	if room < 3 {
+		return nil, false
+	}
+	window := room - 2 // section heading + breathing room
+	if window > detailMaxBodyRows {
+		window = detailMaxBodyRows
+	}
+	start := m.detailScroll
+	if max := len(body) - window; max < 0 {
+		start = 0
+	} else if start > max {
+		start = max
+	}
+	if start < 0 {
+		start = 0
+	}
+	visible := window
+	if start+visible > len(body) {
+		visible = len(body) - start
+	}
+	if visible < 1 {
+		return nil, false
+	}
+	rows = append([]string{descLabel(width, start, visible, len(body)), ""}, body[start:start+visible]...)
+	return rows, start > 0 || start+visible < len(body)
+}
+
+// descLabel is the section heading and stable viewport counter. Unlike a
+// trailing "+N more" row it does not jump around as the body scrolls.
+func descLabel(width, start, visible, total int) string {
+	left := lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Render("DESCRIPTION")
+	right := MutedStyle.Render(fmt.Sprintf("%d–%d / %d", start+1, start+visible, total))
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // parseDeadline reads a DD/MM/YYYY date. Blank means "no deadline", which is
@@ -616,38 +737,62 @@ func (m *BoardModel) focusField(delta int) {
 	m.applyFieldFocus()
 }
 
-// renderForm draws the three-field entry panel, centred by View.
+// renderForm draws the add/edit form as the same document-style panel used by
+// task details: stacked sections, readable measure, dividers, and keycaps.
 func (m BoardModel) renderForm() string {
-	heading := "new task"
+	heading := "NEW TASK"
 	if m.editID != "" {
-		heading = "edit task"
+		heading = "EDIT TASK"
 	}
-	label := func(i int, text string) string {
-		style := MutedStyle
-		if i == m.field {
-			style = lipgloss.NewStyle().Foreground(ColAccent).Bold(true)
-		}
-		return style.Render(fmt.Sprintf("%-*s", labelWidth, text))
-	}
+	width := m.popupWidth()
+	contentWidth := width - 2
 
 	rows := []string{
 		TitleStyle.Render(heading),
-		label(fieldTitle, "Title") + m.title.View(),
-		// The description box is several rows tall, so its label is joined
-		// alongside rather than concatenated onto the first line.
-		lipgloss.JoinHorizontal(lipgloss.Top, label(fieldDesc, "Description"), m.desc.View()),
-		label(fieldDeadline, "Deadline") + m.deadline.View(),
+		MutedStyle.Render(strings.Repeat("─", contentWidth)),
+		formLabel(fieldTitle, m.field, "TITLE", "REQUIRED", contentWidth),
+		m.title.View(),
+		"",
+		formLabel(fieldDesc, m.field, "DESCRIPTION", "CTRL+J  NEW LINE", contentWidth),
+		m.desc.View(),
+		"",
+		formLabel(fieldDeadline, m.field, "DEADLINE", "OPTIONAL · DD/MM/YYYY", contentWidth),
+		m.deadline.View(),
 	}
 	if m.err != "" {
 		rows = append(rows, lipgloss.NewStyle().Foreground(AccentFor(task.StatusBlocked)).
-			Render("! "+m.err))
+			Bold(true).Render("ERROR  "+m.err))
 	}
 	if _, calendar := m.formRows(); calendar {
-		rows = append(rows, "", m.picker.View(m.now()), "",
-			MutedStyle.Render("hjkl day/week · t today · or type the date"))
+		rows = append(rows, "", m.picker.View(m.now()),
+			MutedStyle.Render("h/j/k/l Move   t Today   or type a date"))
 	}
-	rows = append(rows, MutedStyle.Render("tab field · ctrl+j new line · enter save · esc cancel"))
-	return ColumnStyle.Copy().Width(m.popupWidth()).Render(strings.Join(rows, "\n"))
+	rows = append(rows,
+		MutedStyle.Render(strings.Repeat("─", contentWidth)),
+		strings.Join([]string{
+			detailKey("tab", "Field"),
+			detailKey("ctrl+j", "New line"),
+			detailKey("enter", "Save"),
+			detailKey("esc", "Cancel"),
+		}, MutedStyle.Render("   ")),
+	)
+	return ColumnStyle.Copy().Width(width).Render(strings.Join(rows, "\n"))
+}
+
+// formLabel aligns a section name with its compact field hint. The focused
+// field uses the accent; inactive labels recede without disappearing.
+func formLabel(field, focused int, label, hint string, width int) string {
+	style := MutedStyle.Copy().Bold(true)
+	if field == focused {
+		style = lipgloss.NewStyle().Foreground(ColAccent).Bold(true)
+	}
+	left := style.Render(label)
+	right := MutedStyle.Render(hint)
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m BoardModel) renderFooter() string {
@@ -748,6 +893,7 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		}
 		m.focus = focusItem
 		m.mode = modeDetail
+		m.detailScroll = 0
 	case "a":
 		m.openForm("", "", "", nil)
 	case "e":
@@ -867,8 +1013,9 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	return m, cmd
 }
 
-// updateDetail handles the expanded-task popup: read-only, with e/d as the
-// same shortcuts the board uses so the popup is a place to act from too.
+// updateDetail handles the expanded-task popup: j/k scroll a long
+// description, with e/d as the same shortcuts the board uses so the popup
+// is a place to act from too.
 func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	switch k.String() {
 	case "esc", "enter", "q":
@@ -886,8 +1033,39 @@ func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeConfirm
+	case "j", "down":
+		m.detailScroll = m.clampDetailScroll(m.detailScroll + 1)
+	case "k", "up":
+		m.detailScroll = m.clampDetailScroll(m.detailScroll - 1)
+	case "g":
+		m.detailScroll = 0
+	case "G":
+		m.detailScroll = 1 << 30 // clamped to the last window below
+		m.detailScroll = m.clampDetailScroll(m.detailScroll)
 	}
 	return m, nil
+}
+
+// clampDetailScroll keeps the description offset inside its row range for
+// the current card and width: past the end pins to the last window, before
+// the start pins to zero. Cards without a description always pin to zero.
+func (m BoardModel) clampDetailScroll(offset int) int {
+	t, ok := m.selectedTask()
+	if !ok {
+		return 0
+	}
+	if offset < 0 {
+		return 0
+	}
+	width := m.popupWidth() - 2 // panel padding, same budget renderDetail uses
+	max := len(m.detailBodyLines(t, width)) - detailMaxBodyRows
+	if max < 0 {
+		max = 0
+	}
+	if offset > max {
+		return max
+	}
+	return offset
 }
 
 // seedPicker points the calendar at whatever the Deadline field currently

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1246,7 +1247,7 @@ func TestEnterExpandsTheSelectedTaskCentred(t *testing.T) {
 		t.Fatalf("mode = %v, want modeDetail", m.mode)
 	}
 	out := stripANSI(m.View())
-	for _, want := range []string{"[A long task title]", "first line", "second line", "esc close"} {
+	for _, want := range []string{"[A long task title]", "first line second line", "esc Close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("detail popup is missing %q:\n%s", want, out)
 		}
@@ -1311,12 +1312,44 @@ func TestFormIsCentredAndReplacesTheBoard(t *testing.T) {
 	if strings.Contains(out, "TODO (") {
 		t.Errorf("the board is still drawn behind the form popup:\n%s", out)
 	}
-	if !strings.Contains(out, "new task") {
+	if !strings.Contains(out, "NEW TASK") {
 		t.Errorf("form popup did not render:\n%s", out)
 	}
 	lines := strings.Split(out, "\n")
 	if strings.TrimSpace(lines[0]) != "" {
 		t.Errorf("form popup is flush with the top row, want it centred:\n%s", out)
+	}
+}
+
+func TestFormDescriptionEditorUsesAvailableHeight(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m.SetSize(120, 40)
+	m = press(m, "a", "tab") // focus the description
+
+	if got := m.desc.Height(); got != descMaxRows {
+		t.Errorf("description height = %d, want %d on a normal terminal", got, descMaxRows)
+	}
+	if m.desc.CharLimit < 5000 {
+		t.Errorf("description CharLimit = %d, want room for substantial task notes", m.desc.CharLimit)
+	}
+	out := stripANSI(m.View())
+	for _, want := range []string{"DESCRIPTION", "CTRL+J  NEW LINE", "ctrl+j New line", "enter Save"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("professional form is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestFormDescriptionEditorShrinksOnlyForTerminalHeight(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m.SetSize(100, 20)
+	m = press(m, "a")
+
+	if got := m.desc.Height(); got <= 3 {
+		t.Errorf("description height = %d, want more than the old three-line editor", got)
+	}
+	if got := lipgloss.Height(m.View()); got > 20 {
+		t.Errorf("20-row form is %d rows tall, want it to fit:\n%s", got, m.View())
 	}
 }
 
@@ -1421,8 +1454,8 @@ func TestDetailPopupNeverExceedsTerminalHeight(t *testing.T) {
 	}
 }
 
-// On a terminal too short for everything, the calendar goes before the
-// description does, and the description is clipped rather than overflowing.
+// On a short terminal the calendar gives way first. Single source newlines
+// are Markdown soft-wraps, so pasted hard-wrapped prose reflows cleanly.
 func TestDetailPopupClipsTheDescriptionBeforeOverflowing(t *testing.T) {
 	// UTC midnight, matching the UTC test clock (see above).
 	b := withDeadline(time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC))
@@ -1435,16 +1468,122 @@ func TestDetailPopupClipsTheDescriptionBeforeOverflowing(t *testing.T) {
 	if strings.Contains(out, "Mo  Tu  We") {
 		t.Errorf("calendar survived on a 14-row terminal:\n%s", out)
 	}
-	if !strings.Contains(out, "one") || !strings.Contains(out, "…") {
-		t.Errorf("description was not clipped with an ellipsis:\n%s", out)
-	}
-	if strings.Contains(out, "eight") {
-		t.Errorf("clipped description still shows its last line:\n%s", out)
+	if !strings.Contains(out, "one two three four five six seven eight") {
+		t.Errorf("hard-wrapped description did not reflow into one paragraph:\n%s", out)
 	}
 	// The parts that never give up their rows.
-	for _, want := range []string{"[Task title]", "● 12/08/2026", "esc close"} {
+	for _, want := range []string{"[Task title]", "● 12/08/2026", "esc Close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("clipped popup dropped %q:\n%s", want, out)
 		}
+	}
+}
+
+// A long description is windowed, not dumped: the popup labels the section,
+// marks the overflow, and j/k scroll through it.
+func TestDetailPopupScrollsLongDescription(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[Task title]", strings.Repeat("readable prose needs enough words to wrap across the viewport ", 20), nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 24) // short enough that 30 rows must window
+	m = press(m, "enter")
+	out := stripANSI(m.View())
+
+	for _, want := range []string{"DESCRIPTION", "1–10 /", "j/k Scroll"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("scrollable popup is missing %q:\n%s", want, out)
+		}
+	}
+	m = press(m, "j", "j", "j")
+	out = stripANSI(m.View())
+	if !strings.Contains(out, "4–13 /") {
+		t.Errorf("scrolling did not advance the stable row counter:\n%s", out)
+	}
+
+	m = press(m, "G")
+	if out := stripANSI(m.View()); !strings.Contains(out, fmt.Sprintf("–%d / %d", len(m.detailBodyLines(b.Tasks[0], m.popupWidth()-2)), len(m.detailBodyLines(b.Tasks[0], m.popupWidth()-2)))) {
+		t.Errorf("G did not jump to the last window:\n%s", out)
+	}
+	m = press(m, "g")
+	if out := stripANSI(m.View()); !strings.Contains(out, "1–10 /") {
+		t.Errorf("g did not jump back to the top:\n%s", out)
+	}
+}
+
+// A short body renders with no scroll chrome: no label overflow marks, no
+// scroll hint — the popup reads as it always has.
+func TestDetailPopupShortDescriptionHasNoScrollChrome(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[Task title]", "just one line", nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	out := stripANSI(press(m, "enter").View())
+
+	if strings.Contains(out, "j/k Scroll") {
+		t.Errorf("short popup advertises scrolling:\n%s", out)
+	}
+	for _, want := range []string{"DESCRIPTION", "just one line"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("short popup is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// The meta line orients at a glance: status, ages, and travel history.
+func TestDetailPopupMetaLine(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	id := b.Add("[Task title]", "", nil, ref.Add(-72*time.Hour)).ID
+	if err := b.Move(id, task.StatusDoing, ref.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	out := stripANSI(press(m, "l", "enter").View()) // the card lives in DOING
+
+	for _, want := range []string{"DOING", "created 3d ago", "1 move"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("meta line is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDetailPopupNormalizesHardWrappedTitle(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("A hard-wrapped\ntask title", "short body", nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	out := stripANSI(press(m, "enter").View())
+	if !strings.Contains(out, "A hard-wrapped task title") {
+		t.Errorf("title kept source line breaks instead of reflowing:\n%s", out)
+	}
+	if strings.Contains(out, "hard-wrapped\n") {
+		t.Errorf("title still has a hard source break:\n%s", out)
+	}
+}
+
+// A tall terminal must not defeat the windowing: the body stays capped and
+// scrollable no matter how much room the screen has.
+func TestDetailPopupCapsBodyOnTallTerminal(t *testing.T) {
+	b := &task.Board{}
+	b.SetPath("")
+	b.Add("[Task title]", strings.Repeat("professional prose still needs a bounded reading measure and viewport ", 20), nil, ref)
+
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	out := stripANSI(press(m, "enter").View())
+
+	if !strings.Contains(out, "1–10 /") {
+		t.Errorf("tall popup shows more than the capped window:\n%s", out)
+	}
+	if !strings.Contains(out, "j/k Scroll") {
+		t.Errorf("tall popup does not advertise its bounded viewport:\n%s", out)
 	}
 }
