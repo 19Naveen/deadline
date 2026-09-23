@@ -8,11 +8,13 @@
 //
 //	gotodo init                                              # one dev board in ./.deadline/
 //	gotodo add "Rewrite the parser" -desc "..." -deadline 04/08/2026
+//	gotodo board                                             # board type + accepted columns
 //	gotodo list
 //	gotodo list -status blocked
-//
-// gotodo move 3fa1c9e2 testing-review
-// gotodo version
+//	gotodo move 3fa1c9e2 testing-review
+//	gotodo edit 3fa1c9e2 -desc "Ready for review"
+//	gotodo delete 3fa1c9e2
+//	gotodo version
 //
 // The global -file flag, when given, must precede the subcommand.
 package main
@@ -48,6 +50,8 @@ const projectBoardFile = "board.json"
 
 // addUsage is printed for `add -h` and malformed add invocations.
 const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...]`
+
+const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY]`
 
 // version is the built revision, stamped at build time:
 //
@@ -100,14 +104,52 @@ func run(argv []string) error {
 		return runAdd(path, args[1:])
 	case "list":
 		return runList(path, args[1:])
+	case "board":
+		return runBoard(path, args[1:])
 	case "move":
 		return runMove(path, args[1:])
+	case "edit":
+		return runEdit(path, args[1:])
+	case "delete":
+		return runDelete(path, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, add, list, move or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, board, add, list, move, edit, delete or version)", args[0])
 	}
+}
+
+// runBoard reports which board type and status pipeline this invocation
+// resolves to. It deliberately does not expose the JSON path: agents should
+// use the CLI, never treat the persistence file as an API. Personal boards
+// use todo/doing/blocked/done, while project boards created by init use the
+// development pipeline.
+func runBoard(path string, args []string) error {
+	fs := flag.NewFlagSet("board", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q (usage: gotodo board)", fs.Arg(0))
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(b.Statuses()))
+	for _, s := range b.Statuses() {
+		names = append(names, string(s))
+	}
+	kind := "personal"
+	if b.DoneStatus() == task.StatusShipped {
+		kind = "development"
+	}
+	fmt.Printf("board: %s\ncolumns: %s\n", kind, strings.Join(names, ", "))
+	return nil
 }
 
 // resolveBoardPath finds the board for this invocation: the nearest
@@ -284,15 +326,9 @@ func runAdd(path string, args []string) error {
 	if title == "" {
 		return errors.New("title must not be blank")
 	}
-	var deadline *time.Time
-	if *deadlineStr != "" {
-		// Local midnight, like the TUI form: UTC midnight would shift the
-		// date for timezones west of Greenwich.
-		d, err := time.ParseInLocation(dateLayout, *deadlineStr, time.Local)
-		if err != nil {
-			return fmt.Errorf("bad deadline %q (want DD/MM/YYYY)", *deadlineStr)
-		}
-		deadline = &d
+	deadline, err := parseHeadlessDeadline(*deadlineStr)
+	if err != nil {
+		return err
 	}
 	status := board.Statuses()[0]
 	if *statusStr != "" {
@@ -314,6 +350,20 @@ func runAdd(path string, args []string) error {
 	}
 	fmt.Printf("added %s [%s] %s\n", shortID(t.ID), status, t.Title)
 	return nil
+}
+
+// parseHeadlessDeadline parses CLI deadline flags. Blank is a valid nil
+// deadline, used by edit to clear an existing date. Local midnight matches
+// the TUI and avoids a neighbouring calendar day west of UTC.
+func parseHeadlessDeadline(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	d, err := time.ParseInLocation(dateLayout, value, time.Local)
+	if err != nil {
+		return nil, fmt.Errorf("bad deadline %q (want DD/MM/YYYY)", value)
+	}
+	return &d, nil
 }
 
 // runList prints one line per task: id, column, title, deadline when set.
@@ -405,11 +455,102 @@ func runMove(path string, args []string) error {
 	return nil
 }
 
+// runEdit changes any supplied task fields headless. Omitted flags preserve
+// their current values; `-desc ""` and `-deadline ""` explicitly clear
+// those fields. Status is intentionally separate (`gotodo move`).
+func runEdit(path string, args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Println(editUsage)
+		return nil
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("bad task id %q (%s)", args[0], editUsage)
+	}
+	fs := flag.NewFlagSet("edit", flag.ContinueOnError)
+	titleFlag := fs.String("title", "", "replacement title")
+	descFlag := fs.String("desc", "", "replacement description (blank clears)")
+	deadlineFlag := fs.String("deadline", "", "replacement deadline as DD/MM/YYYY (blank clears)")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q (%s)", fs.Arg(0), editUsage)
+	}
+	set := make(map[string]bool, 3)
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if len(set) == 0 {
+		return errors.New(editUsage)
+	}
+
+	board, err := task.Load(path)
+	if err != nil {
+		return err
+	}
+	board.SweepArchive(time.Now())
+	t, err := resolveID(board, args[0])
+	if err != nil {
+		return err
+	}
+	title, desc, deadline := t.Title, t.Description, t.Deadline
+	if set["title"] {
+		title = *titleFlag
+	}
+	if set["desc"] {
+		desc = *descFlag
+	}
+	if set["deadline"] {
+		deadline, err = parseHeadlessDeadline(*deadlineFlag)
+		if err != nil {
+			return err
+		}
+	}
+	if err := board.Edit(t.ID, title, desc, deadline, time.Now()); err != nil {
+		return err
+	}
+	if err := board.Save(); err != nil {
+		return err
+	}
+	fmt.Printf("edited %s [%s] %s\n", shortID(t.ID), t.Status, strings.TrimSpace(title))
+	return nil
+}
+
+// runDelete removes one task headless: delete <id-prefix>. The ID may be
+// abbreviated as long as it still matches exactly one active task.
+// Archived tasks are never deleted headless — unarchive them in the TUI
+// first. There is no confirm step, so callers should list first; the
+// printed receipt names what was removed.
+func runDelete(path string, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: gotodo delete <id>")
+	}
+	board, err := task.Load(path)
+	if err != nil {
+		return err
+	}
+	board.SweepArchive(time.Now())
+
+	t, err := resolveID(board, args[0])
+	if err != nil {
+		return err
+	}
+	if err := board.Delete(t.ID); err != nil {
+		return err
+	}
+	if err := board.Save(); err != nil {
+		return err
+	}
+	fmt.Printf("deleted %s [%s] %s\n", shortID(t.ID), t.Status, t.Title)
+	return nil
+}
+
 // resolveID finds the one active task whose ID starts with arg. Archived
 // tasks are reported rather than silently moved while invisible.
 func resolveID(b *task.Board, arg string) (task.Task, error) {
 	if arg == "" {
-		return task.Task{}, errors.New("usage: gotodo move <id> <status>")
+		return task.Task{}, errors.New("task id must not be blank")
 	}
 	var active, archived []task.Task
 	for _, t := range b.Tasks {

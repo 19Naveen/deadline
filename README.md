@@ -257,15 +257,18 @@ Coding agents can't drive the interactive board, so `gotodo` has headless comman
 
 ```bash
 gotodo init                                    # once per project (skip if .deadline/ exists)
+gotodo board                                   # board type + accepted columns
 gotodo add "Rewrite the parser" -desc "Split the lexer" -deadline 04/08/2026
 gotodo list
 gotodo list -status blocked
 gotodo move 3fa1c9e2 testing-review          # any unique id prefix works
+gotodo edit 3fa1c9e2 -title "Ship parser" -desc "Ready" -deadline 05/08/2026
+gotodo delete 3fa1c9e2                       # no confirm; list first, there is no undo
 ```
 
 The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). A bare `gotodo -h`, or `init`, `add` or `list` with `-h`, prints help without changing anything.
 
-The installer drops a `deadline` skill (`skills/deadline/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories, so agents discover this workflow on their own. An open board picks up agent writes within a couple of seconds — no restart needed. The whole skill is ~200 words — it stays out of the way until needed.
+The installer drops a `gotodo-task-board` skill (`skills/gotodo-task-board/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories. Its task-management and kanban keywords make it easy for agents to discover for any coding workflow. An open board picks up agent writes within a couple of seconds — no restart needed.
 
 ---
 

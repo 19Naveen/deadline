@@ -119,11 +119,126 @@ func TestHeadlessRoundTripThroughRun(t *testing.T) {
 	}
 }
 
+func TestBoardReportsTypeAndColumnsWithoutStoragePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	out := captureStdout(t, func() {
+		if err := run([]string{"-file", path, "board"}); err != nil {
+			t.Fatalf("board(personal) = %v", err)
+		}
+	})
+	if !strings.Contains(out, "board: personal") || !strings.Contains(out, "columns: todo, doing, blocked, done") {
+		t.Errorf("personal board output = %q", out)
+	}
+	if strings.Contains(out, path) || strings.Contains(out, ".json") {
+		t.Errorf("board output leaks storage path and invites direct file access: %q", out)
+	}
+
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetColumns(task.DevColumns)
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() {
+		if err := run([]string{"-file", path, "board"}); err != nil {
+			t.Fatalf("board(dev) = %v", err)
+		}
+	})
+	if !strings.Contains(out, "board: development") || !strings.Contains(out, "columns: todo, indev, testing-review, blocked, shipped") {
+		t.Errorf("development board output = %q", out)
+	}
+	if err := run([]string{"-file", path, "board", "extra"}); err == nil {
+		t.Error("board(extra) = nil, want a usage error")
+	}
+}
+
 func TestHelpExitsZero(t *testing.T) {
-	for _, argv := range [][]string{{"-h"}, {"--help"}, {"init", "-h"}, {"list", "-h"}, {"add"}, {"add", "-h"}} {
+	for _, argv := range [][]string{{"-h"}, {"--help"}, {"init", "-h"}, {"board", "-h"}, {"list", "-h"}, {"add"}, {"add", "-h"}, {"edit"}, {"edit", "-h"}} {
 		if err := run(argv); err != nil {
 			t.Errorf("run(%q) = %v, want nil", argv, err)
 		}
+	}
+}
+
+func TestEditUpdatesOnlySuppliedFieldsAndCanClearOptionalFields(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "Original", "-desc", "old detail", "-deadline", "04/08/2026"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := b.Tasks[0].ID[:8]
+
+	if err := run([]string{"edit", id, "-title", "Updated"}); err != nil {
+		t.Fatalf("edit title = %v", err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Tasks[0]; got.Title != "Updated" || got.Description != "old detail" || got.Deadline == nil {
+		t.Fatalf("partial edit = %+v, want preserved description and deadline", got)
+	}
+
+	if err := run([]string{"edit", id, "-desc", "", "-deadline", ""}); err != nil {
+		t.Fatalf("clear optional fields = %v", err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Tasks[0]; got.Title != "Updated" || got.Description != "" || got.Deadline != nil {
+		t.Fatalf("cleared edit = %+v", got)
+	}
+}
+
+func TestEditValidationErrorsWriteNothing(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "Original", "-desc", "keep"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := b.Tasks[0].ID[:8]
+	bad := [][]string{
+		{"edit", id},
+		{"edit", id, "-title", "   "},
+		{"edit", id, "-deadline", "2026-08-04"},
+		{"edit", "missing", "-desc", "changed"},
+	}
+	for _, argv := range bad {
+		if err := run(argv); err == nil {
+			t.Errorf("run(%q) = nil, want an error", argv)
+		}
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Tasks[0]; got.Title != "Original" || got.Description != "keep" {
+		t.Fatalf("task after rejected edits = %+v", got)
 	}
 }
 
@@ -250,10 +365,100 @@ func TestListOutput(t *testing.T) {
 }
 
 func TestUnknownCommandErrors(t *testing.T) {
-	if err := run([]string{"delete", "abc"}); err == nil {
-		t.Error("run(delete) = nil, want an unknown-command error")
+	if err := run([]string{"frobnicate", "abc"}); err == nil {
+		t.Error("run(frobnicate) = nil, want an unknown-command error")
 	} else if !strings.Contains(err.Error(), "unknown command") {
-		t.Errorf("run(delete) error = %q, want an unknown-command message", err)
+		t.Errorf("run(frobnicate) error = %q, want an unknown-command message", err)
+	}
+}
+
+func TestDeleteHeadless(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "[Drop]", "-status", "testing-review"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "[Keep]"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var drop, keep string
+	for _, tc := range b.Tasks {
+		if tc.Title == "[Drop]" {
+			drop = tc.ID
+		} else {
+			keep = tc.ID
+		}
+	}
+	out := captureStdout(t, func() {
+		if err := run([]string{"delete", drop[:8]}); err != nil {
+			t.Fatalf("delete = %v, want nil", err)
+		}
+	})
+	if !strings.Contains(out, "deleted") || !strings.Contains(out, "[Drop]") {
+		t.Errorf("delete printed %q, want a receipt naming the card", out)
+	}
+	re, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(re.Tasks) != 1 || re.Tasks[0].ID != keep {
+		t.Fatalf("tasks = %+v, want only the kept card", re.Tasks)
+	}
+	// Deleting it again fails: the id is gone.
+	if err := run([]string{"delete", drop[:8]}); err == nil {
+		t.Error("delete(gone id) = nil, want an error")
+	}
+	if err := run([]string{"delete"}); err == nil {
+		t.Error("delete(no id) = nil, want a usage error")
+	}
+	if err := run([]string{"delete", keep[:8], "extra"}); err == nil {
+		t.Error("delete(extra arg) = nil, want a usage error")
+	}
+}
+
+func TestDeleteHeadlessRejectsAmbiguousAndArchived(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "board.json")
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Add("[Alpha]", "", nil, testRef)
+	b.Add("[Alpha beta]", "", nil, testRef)
+	old := b.Add("[Old]", "", nil, testRef)
+	if err := b.Move(old.ID, task.StatusDone, testRef); err != nil {
+		t.Fatal(err)
+	}
+	// Pin IDs so the prefixes below are deterministic (Add alone sets
+	// dirty, so the hand-set IDs still get saved).
+	b.Tasks[0].ID, b.Tasks[1].ID, b.Tasks[2].ID = "abc123", "abc456", "def789"
+	b.Tasks[2].Archived = true
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDelete(path, []string{"abc"}); err == nil {
+		t.Error("delete(shared prefix) = nil, want an ambiguity error")
+	}
+	if err := runDelete(path, []string{"def"}); err == nil {
+		t.Error("delete(archived-only match) = nil, want an archived error")
+	}
+	re, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(re.Tasks) != 3 {
+		t.Errorf("tasks = %d after rejected deletes, want 3", len(re.Tasks))
 	}
 }
 
