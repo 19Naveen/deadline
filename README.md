@@ -186,6 +186,8 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 |---|---|
 | `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `esc` close |
 | `a` | add a task |
+| `s` | add a subtask under the selected task's family |
+| `f` | focus the board on the selected parent and its subtasks; press again to clear |
 | `e` | edit the selected task |
 | `d` | delete it, after a `y`/`n` confirm |
 | `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
@@ -202,12 +204,20 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 truncated — the card in the column only has room for the first line of a
 description. It is read-only, but `e` and `d` work from there.
 
-Adding and editing open the same three-field form, centred in the same place.
-`tab` and `shift+tab` move between Title, Description and Deadline. `enter`
-saves from any field, `esc` throws it away.
+Adding and editing open the same four-field form, centred in the same place.
+`tab` and `shift+tab` move between Title, Description, Deadline and Parent.
+The Parent field accepts any unique task ID prefix. `enter` saves from any
+field, `esc` throws it away.
 
 The Description is multi-line: `ctrl+j` starts a new line, and `enter` still
-saves. The box shows four lines at a time and scrolls past that.
+saves. Both edit and detail views open a 15-row description viewport by
+default, shrinking only when the terminal cannot fit it.
+
+Parent tasks show completed/total subtask progress. Subtasks keep their own
+column and deadline, display their parent on the card, and appear in the
+parent's detail view. A parent cannot enter the terminal column until every
+subtask is complete. Deleting a parent safely detaches rather than deletes its
+subtasks.
 
 Dates go in as `DD/MM/YYYY`. A date it cannot read keeps the form open and tells you the format, rather than quietly dropping what you typed.
 
@@ -259,10 +269,13 @@ Coding agents can't drive the interactive board, so `gotodo` has headless comman
 gotodo init                                    # once per project (skip if .deadline/ exists)
 gotodo board                                   # board type + accepted columns
 gotodo add "Rewrite the parser" -desc "Split the lexer" -deadline 04/08/2026
+gotodo add "Write parser tests" -parent 3fa1c9e2
 gotodo list
 gotodo list -status blocked
+gotodo list -parent 3fa1c9e2
+gotodo show 3fa1c9e2                         # details, parent and subtasks
 gotodo move 3fa1c9e2 testing-review          # any unique id prefix works
-gotodo edit 3fa1c9e2 -title "Ship parser" -desc "Ready" -deadline 05/08/2026
+gotodo edit 3fa1c9e2 -parent 91bc2f0a         # attach; -parent "" detaches
 gotodo delete 3fa1c9e2                       # no confirm; list first, there is no undo
 ```
 

@@ -11,10 +11,12 @@ along as you work:
    `blocked` when stuck.
 2. `gotodo list` and skip a duplicate card if one already covers the work.
 3. `gotodo add "title" [-desc "detail"] [-status todo]` before writing code.
-4. `gotodo move <id-prefix> <active-column>` when starting, then through the
+4. Use `-parent <id-prefix>` when the work is a subtask of an existing card;
+   inspect the family with `gotodo show <id-prefix>` or `list -parent`.
+5. `gotodo move <id-prefix> <active-column>` when starting, then through the
    reported pipeline's review/terminal columns as work is verified and done.
-5. `gotodo edit <id-prefix> [flags]` for title, description, or deadline changes.
-6. `gotodo delete <id-prefix>` only for cards logged by mistake — no undo.
+6. `gotodo edit <id-prefix> [flags]` for title, description, deadline, or parent changes.
+7. `gotodo delete <id-prefix>` only for cards logged by mistake — no undo.
 
 Headless commands only (never run bare `gotodo`, it opens a TUI). If `gotodo`
 is not on PATH, try exactly `~/.local/bin/gotodo`; do not search the filesystem

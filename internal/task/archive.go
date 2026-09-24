@@ -20,6 +20,10 @@ func (b *Board) SweepArchive(now time.Time) int {
 		if t.Archived || t.Status != done {
 			continue
 		}
+		finished, total := b.ChildProgress(t.ID)
+		if finished != total {
+			continue
+		}
 		at, ok := CompletedAt(*t, done)
 		if !ok || now.Sub(at) < ArchiveAfter {
 			continue
@@ -28,10 +32,8 @@ func (b *Board) SweepArchive(now time.Time) int {
 		t.Archived = true
 		t.ArchivedAt = &stamp
 		t.UpdatedAt = now
+		b.markChanged(t.ID)
 		moved++
-	}
-	if moved > 0 {
-		b.dirty = true
 	}
 	return moved
 }

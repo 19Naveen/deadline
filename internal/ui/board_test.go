@@ -832,12 +832,16 @@ func TestFormTabCyclesFields(t *testing.T) {
 		t.Errorf("field = %d, want fieldDeadline after two tabs", m.field)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldParent {
+		t.Errorf("field = %d, want fieldParent after three tabs", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.field != fieldTitle {
 		t.Errorf("field = %d, want it to wrap back to fieldTitle", m.field)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if m.field != fieldDeadline {
-		t.Errorf("field = %d, want fieldDeadline after shift+tab from the first field", m.field)
+	if m.field != fieldParent {
+		t.Errorf("field = %d, want fieldParent after shift+tab from the first field", m.field)
 	}
 }
 
@@ -969,6 +973,128 @@ func TestFormEscCancels(t *testing.T) {
 	}
 	if len(m.board.Tasks) != 0 {
 		t.Errorf("Tasks = %d, want 0 after cancel", len(m.board.Tasks))
+	}
+}
+
+func TestSubtaskShortcutSeedsParentAndCreatesChild(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "", nil, ref).ID
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "s")
+	if m.mode != modeInput || m.parent.Value() != shortTaskID(parent) {
+		t.Fatalf("subtask form mode=%v parent=%q", m.mode, m.parent.Value())
+	}
+	m.title.SetValue("Child")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(b.Tasks) != 2 || b.Tasks[1].ParentID != parent {
+		t.Fatalf("tasks = %+v, want linked child", b.Tasks)
+	}
+}
+
+func TestEditParentFieldAttachesAndDetachesTask(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "", nil, ref).ID
+	child := b.Add("Child", "", nil, ref).ID
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "j", "e")
+	m.parent.SetValue(shortTaskID(parent))
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got, _ := b.TaskByID(child); got.ParentID != parent {
+		t.Fatalf("ParentID = %q, want %q", got.ParentID, parent)
+	}
+	m = press(m, "e")
+	m.parent.SetValue("")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got, _ := b.TaskByID(child); got.ParentID != "" {
+		t.Fatalf("ParentID = %q after detach", got.ParentID)
+	}
+}
+
+func TestCardsShowParentAndSubtaskProgress(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "", nil, ref).ID
+	child, err := b.AddChild(parent, "Child", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	parentCard := stripANSI(m.renderCard(0, 0, b.Tasks[0], 40))
+	childCard := stripANSI(m.renderCard(0, 1, *child, 40))
+	if !strings.Contains(parentCard, "subtasks 0/1") {
+		t.Errorf("parent card = %q", parentCard)
+	}
+	if !strings.Contains(childCard, "↳ Parent") {
+		t.Errorf("child card = %q", childCard)
+	}
+}
+
+func TestDetailShowsSubtasksAndParentBreadcrumb(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "parent detail", nil, ref).ID
+	if _, err := b.AddChild(parent, "Child", "", nil, ref); err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	parentView := stripANSI(press(m, "enter").View())
+	for _, want := range []string{"SUBTASKS", "0/1 COMPLETE", "Child", "s Subtask"} {
+		if !strings.Contains(parentView, want) {
+			t.Errorf("parent detail missing %q:\n%s", want, parentView)
+		}
+	}
+	m = fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	childView := stripANSI(press(m, "j", "enter").View())
+	if !strings.Contains(childView, "Parent › Child") {
+		t.Errorf("child detail lacks breadcrumb:\n%s", childView)
+	}
+}
+
+func TestFamilyFilterShowsOnlyParentAndChildrenAcrossColumns(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "", nil, ref).ID
+	first, err := b.AddChild(parent, "First", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := b.AddChild(parent, "Second", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Add("Unrelated", "", nil, ref)
+	if err := b.Move(second.ID, task.StatusDoing, ref); err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "f")
+	if m.familyID != parent {
+		t.Fatalf("familyID = %q, want %q", m.familyID, parent)
+	}
+	if got := m.visibleByStatus(task.StatusTodo); len(got) != 2 || got[0].ID != parent || got[1].ID != first.ID {
+		t.Fatalf("visible todo = %+v", got)
+	}
+	if got := m.visibleByStatus(task.StatusDoing); len(got) != 1 || got[0].ID != second.ID {
+		t.Fatalf("visible doing = %+v", got)
+	}
+	m = press(m, "f")
+	if m.familyID != "" || len(m.visibleByStatus(task.StatusTodo)) != 3 {
+		t.Fatal("second f did not clear family filter")
+	}
+}
+
+func TestReparentingFocusedRootFollowsNewFamily(t *testing.T) {
+	b := &task.Board{}
+	newParent := b.Add("New parent", "", nil, ref).ID
+	root := b.Add("Root", "", nil, ref).ID
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "j", "f", "e")
+	m.parent.SetValue(shortTaskID(newParent))
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.familyID != newParent {
+		t.Fatalf("familyID = %q, want new root %q", m.familyID, newParent)
+	}
+	if got, _ := b.TaskByID(root); got.ParentID != newParent {
+		t.Fatalf("edited task ParentID = %q", got.ParentID)
 	}
 }
 
@@ -1329,6 +1455,9 @@ func TestFormDescriptionEditorUsesAvailableHeight(t *testing.T) {
 	if got := m.desc.Height(); got != descMaxRows {
 		t.Errorf("description height = %d, want %d on a normal terminal", got, descMaxRows)
 	}
+	if got := m.desc.Height(); got != 15 {
+		t.Errorf("default description viewport = %d rows, want 15", got)
+	}
 	if m.desc.CharLimit < 5000 {
 		t.Errorf("description CharLimit = %d, want room for substantial task notes", m.desc.CharLimit)
 	}
@@ -1337,6 +1466,21 @@ func TestFormDescriptionEditorUsesAvailableHeight(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("professional form is missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestFormErrorStillFitsShortTerminal(t *testing.T) {
+	m := fixedClock(NewBoardModel(&task.Board{}))
+	m.SetSize(100, 20)
+	m = press(m, "a")
+	m.title.SetValue("Child")
+	m.parent.SetValue("missing")
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.err == "" {
+		t.Fatal("invalid parent produced no form error")
+	}
+	if got := lipgloss.Height(m.View()); got > 20 {
+		t.Errorf("error form is %d rows tall on a 20-row terminal:\n%s", got, m.View())
 	}
 }
 
@@ -1491,14 +1635,14 @@ func TestDetailPopupScrollsLongDescription(t *testing.T) {
 	m = press(m, "enter")
 	out := stripANSI(m.View())
 
-	for _, want := range []string{"DESCRIPTION", "1–10 /", "j/k Scroll"} {
+	for _, want := range []string{"DESCRIPTION", "1–14 /", "j/k Scroll"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("scrollable popup is missing %q:\n%s", want, out)
 		}
 	}
 	m = press(m, "j", "j", "j")
 	out = stripANSI(m.View())
-	if !strings.Contains(out, "4–13 /") {
+	if !strings.Contains(out, "4–17 /") {
 		t.Errorf("scrolling did not advance the stable row counter:\n%s", out)
 	}
 
@@ -1507,7 +1651,7 @@ func TestDetailPopupScrollsLongDescription(t *testing.T) {
 		t.Errorf("G did not jump to the last window:\n%s", out)
 	}
 	m = press(m, "g")
-	if out := stripANSI(m.View()); !strings.Contains(out, "1–10 /") {
+	if out := stripANSI(m.View()); !strings.Contains(out, "1–14 /") {
 		t.Errorf("g did not jump back to the top:\n%s", out)
 	}
 }
@@ -1530,6 +1674,42 @@ func TestDetailPopupShortDescriptionHasNoScrollChrome(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("short popup is missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestDetailAndFormDefaultToFifteenDescriptionRows(t *testing.T) {
+	short := &task.Board{}
+	short.Add("Short", "one line", nil, ref)
+	long := &task.Board{}
+	long.Add("Long", strings.Repeat("word ", 200), nil, ref)
+
+	shortModel := fixedClock(NewBoardModel(short))
+	shortModel.SetSize(120, 40)
+	shortModel = press(shortModel, "enter")
+	longModel := fixedClock(NewBoardModel(long))
+	longModel.SetSize(120, 40)
+	longModel = press(longModel, "enter")
+	if got, want := lipgloss.Height(shortModel.renderDetail()), lipgloss.Height(longModel.renderDetail()); got != want {
+		t.Errorf("short detail height = %d, long detail height = %d; want the same 15-row viewport", got, want)
+	}
+	if out := stripANSI(longModel.renderDetail()); !strings.Contains(out, "1–15 /") {
+		t.Errorf("detail did not open a 15-row viewport:\n%s", out)
+	}
+}
+
+func TestRejectedParentCompletionIsVisibleInMoveFooter(t *testing.T) {
+	b := &task.Board{}
+	parent := b.Add("Parent", "", nil, ref).ID
+	if _, err := b.AddChild(parent, "Child", "", nil, ref); err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	m = press(m, "m", "l", "l", "l")
+	if m.err == "" {
+		t.Fatal("terminal move with unfinished child produced no error")
+	}
+	if footer := stripANSI(m.renderFooter()); !strings.Contains(footer, "finish all subtasks") {
+		t.Errorf("move footer hides error: %q", footer)
 	}
 }
 
@@ -1580,7 +1760,7 @@ func TestDetailPopupCapsBodyOnTallTerminal(t *testing.T) {
 	m.SetSize(120, 40)
 	out := stripANSI(press(m, "enter").View())
 
-	if !strings.Contains(out, "1–10 /") {
+	if !strings.Contains(out, "1–15 /") {
 		t.Errorf("tall popup shows more than the capped window:\n%s", out)
 	}
 	if !strings.Contains(out, "j/k Scroll") {

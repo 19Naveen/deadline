@@ -65,6 +65,7 @@ type Transition struct {
 // Task is one card on the board.
 type Task struct {
 	ID          string       `json:"id"`
+	ParentID    string       `json:"parent_id,omitempty"`
 	Title       string       `json:"title"`
 	Description string       `json:"description,omitempty"`
 	Deadline    *time.Time   `json:"deadline,omitempty"`

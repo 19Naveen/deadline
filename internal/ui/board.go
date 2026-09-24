@@ -37,6 +37,7 @@ const (
 	fieldTitle = iota
 	fieldDesc
 	fieldDeadline
+	fieldParent
 	fieldCount
 )
 
@@ -52,7 +53,8 @@ type BoardModel struct {
 	title    textinput.Model
 	desc     textarea.Model // multi-line: ctrl+j inserts a newline, enter saves
 	deadline textinput.Model
-	field    int        // which of the three fields has focus
+	parent   textinput.Model
+	field    int        // which form field has focus
 	picker   datePicker // the deadline calendar, when open
 
 	editID   string      // set while editing an existing task
@@ -62,6 +64,7 @@ type BoardModel struct {
 	// detailScroll is the scroll offset into the detail popup's description
 	// section, in wrapped rows. Reset whenever another card is opened.
 	detailScroll int
+	familyID     string // root task shown by the optional family filter
 
 	now func() time.Time // injectable clock; tests pin it
 
@@ -85,6 +88,7 @@ func NewBoardModel(b *task.Board) BoardModel {
 	}
 	m.title = line("task title", 200)
 	m.deadline = line("DD/MM/YYYY (optional)", 10)
+	m.parent = line("parent task ID (optional)", 32)
 
 	m.desc = textarea.New()
 	m.desc.Placeholder = "Write details, context, or Markdown…"
@@ -113,8 +117,8 @@ const (
 	popupMaxWidth = 72
 	// The description editor grows with the terminal but stays bounded so the
 	// surrounding fields remain visible. It scrolls beyond these rows.
-	descDefaultRows = 8
-	descMaxRows     = 12
+	descDefaultRows = 15
+	descMaxRows     = 15
 	descMinRows     = 3
 )
 
@@ -135,7 +139,7 @@ func (m BoardModel) popupWidth() int {
 	return w
 }
 
-// sizeForm fits the three fields inside the popup, so a long value scrolls
+// sizeForm fits the fields inside the popup, so a long value scrolls
 // inside its own box instead of stretching the panel past the terminal.
 func (m *BoardModel) sizeForm() {
 	inner := m.popupWidth() - 2 // panel's one-column padding on each side
@@ -144,6 +148,7 @@ func (m *BoardModel) sizeForm() {
 	}
 	m.title.Width = inner - 2 // textinput.Width excludes its "› " prompt
 	m.deadline.Width = inner - 2
+	m.parent.Width = inner - 2
 	m.desc.SetWidth(inner)
 	rows, _ := m.formRows()
 	m.desc.SetHeight(rows)
@@ -162,8 +167,8 @@ func (m BoardModel) formRows() (rows int, calendar bool) {
 	}
 	// Content budget: one AppModel tab row and the panel's two border rows.
 	budget := m.height - 3
-	// Heading, divider, two title rows, two spacers, description label,
-	// two deadline rows, footer divider and footer hint.
+	// Heading, divider, title/description/deadline/parent labels and inputs,
+	// footer divider and footer hint.
 	fixed := 11
 	if m.err != "" {
 		fixed++
@@ -202,9 +207,25 @@ func (m BoardModel) overlay(panel string) string {
 
 func (m BoardModel) currentStatus() task.Status { return m.board.Statuses()[m.col] }
 
+// visibleByStatus applies the optional family filter without changing the
+// board's domain ordering or hiding tasks from other pages.
+func (m BoardModel) visibleByStatus(s task.Status) []task.Task {
+	items := m.board.ByStatus(s)
+	if m.familyID == "" {
+		return items
+	}
+	out := make([]task.Task, 0, len(items))
+	for _, t := range items {
+		if t.ID == m.familyID || t.ParentID == m.familyID {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // selectedTask is the card under the cursor, if the column is not empty.
 func (m BoardModel) selectedTask() (task.Task, bool) {
-	items := m.board.ByStatus(m.currentStatus())
+	items := m.visibleByStatus(m.currentStatus())
 	i := m.sel[m.col]
 	if i < 0 || i >= len(items) {
 		return task.Task{}, false
@@ -215,13 +236,43 @@ func (m BoardModel) selectedTask() (task.Task, bool) {
 // clampSelection keeps every column's cursor inside its item range.
 func (m *BoardModel) clampSelection() {
 	for i, s := range m.board.Statuses() {
-		n := len(m.board.ByStatus(s))
+		n := len(m.visibleByStatus(s))
 		if m.sel[i] >= n {
 			m.sel[i] = n - 1
 		}
 		if m.sel[i] < 0 {
 			m.sel[i] = 0
 		}
+	}
+}
+
+// selectTaskID restores cursor identity after filtering or mutation.
+func (m *BoardModel) selectTaskID(id string) bool {
+	for col, s := range m.board.Statuses() {
+		for i, t := range m.visibleByStatus(s) {
+			if t.ID == id {
+				m.col, m.sel[col] = col, i
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reconcileFamily clears a stale family filter and restores selection by ID
+// after live reload or archival changes.
+func (m *BoardModel) reconcileFamily(selectedID string) {
+	if m.familyID != "" {
+		if selected, ok := m.board.TaskByID(selectedID); ok && !selected.Archived {
+			m.familyID = m.board.FamilyRootID(selected)
+		}
+		root, ok := m.board.TaskByID(m.familyID)
+		if !ok || root.Archived || root.ParentID != "" {
+			m.familyID = ""
+		}
+	}
+	if selectedID == "" || !m.selectTaskID(selectedID) {
+		m.clampSelection()
 	}
 }
 
@@ -314,10 +365,13 @@ func (m BoardModel) View() string {
 }
 
 func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
-	items := m.board.ByStatus(s)
+	items := m.visibleByStatus(s)
 
-	header := HeaderStyle(s).Render(s.Label()) +
-		MutedStyle.Render(" ("+strconv.Itoa(len(items))+")")
+	count := strconv.Itoa(len(items))
+	if m.familyID != "" {
+		count += "/" + strconv.Itoa(len(m.board.ByStatus(s)))
+	}
+	header := HeaderStyle(s).Render(s.Label()) + MutedStyle.Render(" ("+count+")")
 
 	var lines []string
 	lines = append(lines, header, "")
@@ -430,8 +484,7 @@ func fitWindow(heights []int, avail, sel int) (start, end, more int) {
 	return start, end, more
 }
 
-// renderCard draws one card: title, optional description, optional deadline.
-// A card is 1 to 3 lines tall depending on which fields are set.
+// renderCard draws one card with compact relationship context.
 func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) string {
 	inner := width - 4
 	selected := colIdx == m.col && itemIdx == m.sel[m.col]
@@ -443,6 +496,13 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 	}
 
 	lines := []string{title}
+	if t.ParentID != "" {
+		if parent, ok := m.board.TaskByID(t.ParentID); ok {
+			lines = append(lines, MutedStyle.Render(truncate("↳ "+parent.Title, inner)))
+		}
+	} else if done, total := m.board.ChildProgress(t.ID); total > 0 {
+		lines = append(lines, MutedStyle.Render(truncate(fmt.Sprintf("subtasks %d/%d", done, total), inner)))
+	}
 	if t.Description != "" {
 		lines = append(lines, descLine(t.Description, inner))
 	}
@@ -521,50 +581,68 @@ func (m BoardModel) renderDetail() string {
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	wrap := lipgloss.NewStyle().Width(contentWidth)
-	title := strings.Join(strings.Fields(t.Title), " ")
-
-	head := []string{
-		wrap.Copy().Bold(true).Foreground(ColText).Render(title),
-		detailMetaLine(t, m.now()),
-		MutedStyle.Render(strings.Repeat("─", contentWidth)),
-	}
-
-	var when []string
-	if dl := RenderDeadline(t, m.now(), m.board.DoneStatus()); dl != "" {
-		when = []string{"", dl}
-		// The deadline's own month, the day bracketed and today green, so
-		// "how far off is this" reads at a glance instead of from date
-		// arithmetic. Anchored to now's zone, the zone RenderDeadline and
-		// DeadlineUrgency both work in.
-		cal := []string{"", newDatePicker(t.Deadline.In(m.now().Location())).View(m.now())}
-		if rowsHeight(head)+rowsHeight(when)+rowsHeight(cal)+rowsHeight(detailFoot(false, contentWidth)) <= m.detailBudget() {
-			when = append(when, cal...)
-		}
-	}
+	head := m.detailHead(t, contentWidth)
+	when := m.detailWhen(t, contentWidth, head)
 
 	var desc []string
 	scrollable := false
-	if body := m.detailBodyLines(t, contentWidth); len(body) > 0 {
-		room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(detailFoot(false, contentWidth))
-		desc, scrollable = m.detailDescSection(body, room, contentWidth)
+	body := m.detailBodyLines(t, contentWidth)
+	if len(body) == 0 {
+		body = []string{MutedStyle.Render("No description or subtasks.")}
 	}
+	room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(detailFoot(false, contentWidth))
+	desc, scrollable = m.detailDescSection(body, room, contentWidth, m.detailSectionLabel(t))
 
 	foot := detailFoot(scrollable, contentWidth)
 	rows := append(append(append(head, desc...), when...), foot...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
 
+func (m BoardModel) detailHead(t task.Task, width int) []string {
+	title := strings.Join(strings.Fields(t.Title), " ")
+	if t.ParentID != "" {
+		if parent, ok := m.board.TaskByID(t.ParentID); ok {
+			title = parent.Title + " › " + title
+		}
+	}
+	return []string{
+		lipgloss.NewStyle().Width(width).Bold(true).Foreground(ColText).Render(title),
+		detailMetaLine(t, m.now()),
+		MutedStyle.Render(strings.Repeat("─", width)),
+	}
+}
+
+func (m BoardModel) detailWhen(t task.Task, width int, head []string) []string {
+	dl := RenderDeadline(t, m.now(), m.board.DoneStatus())
+	if dl == "" {
+		return nil
+	}
+	when := []string{"", dl}
+	cal := []string{"", newDatePicker(t.Deadline.In(m.now().Location())).View(m.now())}
+	if rowsHeight(head)+rowsHeight(when)+rowsHeight(cal)+rowsHeight(detailFoot(false, width)) <= m.detailBudget() {
+		when = append(when, cal...)
+	}
+	return when
+}
+
 // detailFoot is the popup's hint footer. The scroll hint only appears when
 // the description actually overflows, so short cards read exactly as before.
 func detailFoot(scrollable bool, width int) []string {
-	hints := []string{detailKey("e", "Edit"), detailKey("d", "Delete"), detailKey("esc", "Close")}
+	hints := []string{detailKey("s", "Subtask"), detailKey("e", "Edit"), detailKey("d", "Delete"), detailKey("esc", "Close")}
 	if scrollable {
 		hints = append([]string{detailKey("j/k", "Scroll")}, hints...)
 	}
+	line := strings.Join(hints, MutedStyle.Render("   "))
+	if lipgloss.Width(line) > width {
+		keys := []string{detailKey("s", ""), detailKey("e", ""), detailKey("d", ""), detailKey("esc", "")}
+		if scrollable {
+			keys = append([]string{detailKey("j/k", "")}, keys...)
+		}
+		line = strings.Join(keys, "  ")
+	}
 	return []string{
 		MutedStyle.Render(strings.Repeat("─", width)),
-		strings.Join(hints, MutedStyle.Render("   ")),
+		line,
 	}
 }
 
@@ -599,33 +677,65 @@ func detailMetaLine(t task.Task, now time.Time) string {
 	return HeaderStyle(t.Status).Render(t.Status.Label()) + meta
 }
 
-// detailBodyLines wraps and styles the task's description for the popup:
-// one display row per entry, each fitting w columns. Nil when the task has
-// no description, in which case the whole section is omitted.
+// detailBodyLines builds the scrollable content shared by the description
+// and direct-subtask list.
 func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
-	if t.Description == "" {
-		return nil
+	var rows []string
+	if t.Description != "" {
+		rows = strings.Split(renderMarkdown(t.Description, w), "\n")
 	}
-	return strings.Split(renderMarkdown(t.Description, w), "\n")
+	children := m.board.Children(t.ID)
+	if len(children) == 0 {
+		return rows
+	}
+	if len(rows) > 0 {
+		done, total := m.board.ChildProgress(t.ID)
+		rows = append(rows, "", lipgloss.NewStyle().Bold(true).Foreground(ColAccent).
+			Render(fmt.Sprintf("SUBTASKS  %d/%d COMPLETE", done, total)), "")
+	}
+	for _, child := range children {
+		status := child.Status.Label()
+		if child.Archived {
+			status += " · ARCHIVED"
+		}
+		prefix := HeaderStyle(child.Status).Render(status)
+		avail := w - lipgloss.Width(prefix) - 2
+		if avail < 1 {
+			avail = 1
+		}
+		rows = append(rows, prefix+"  "+truncate(child.Title, avail))
+	}
+	return rows
+}
+
+func (m BoardModel) detailSectionLabel(t task.Task) string {
+	hasDescription := t.Description != ""
+	hasChildren := len(m.board.Children(t.ID)) > 0
+	switch {
+	case hasDescription && hasChildren:
+		return "DETAILS"
+	case hasChildren:
+		done, total := m.board.ChildProgress(t.ID)
+		return fmt.Sprintf("SUBTASKS  %d/%d COMPLETE", done, total)
+	default:
+		return "DESCRIPTION"
+	}
 }
 
 // detailMaxBodyRows caps the description window even when the terminal
 // could fit more: a tall screen would otherwise show the whole wall of
 // text the windowing was built to tame. j/k reads past it.
-const detailMaxBodyRows = 10
+const detailMaxBodyRows = 15
 
 // detailDescSection windows body into room rows: a DESCRIPTION label plus as
 // many rows as fit, with ▲/▼ indicators when rows hide above or below. It
 // reports whether any rows overflow, which decides the footer's scroll hint.
 // A room too small for even a label and one row drops the section entirely.
-func (m BoardModel) detailDescSection(body []string, room, width int) (rows []string, scrollable bool) {
+func (m BoardModel) detailDescSection(body []string, room, width int, label string) (rows []string, scrollable bool) {
 	if room < 3 {
 		return nil, false
 	}
-	window := room - 2 // section heading + breathing room
-	if window > detailMaxBodyRows {
-		window = detailMaxBodyRows
-	}
+	window := detailWindowRows(room)
 	start := m.detailScroll
 	if max := len(body) - window; max < 0 {
 		start = 0
@@ -642,14 +752,29 @@ func (m BoardModel) detailDescSection(body []string, room, width int) (rows []st
 	if visible < 1 {
 		return nil, false
 	}
-	rows = append([]string{descLabel(width, start, visible, len(body)), ""}, body[start:start+visible]...)
+	visibleRows := append([]string(nil), body[start:start+visible]...)
+	for len(visibleRows) < window {
+		visibleRows = append(visibleRows, "")
+	}
+	rows = append([]string{descLabel(label, width, start, visible, len(body)), ""}, visibleRows...)
 	return rows, start > 0 || start+visible < len(body)
+}
+
+func detailWindowRows(room int) int {
+	window := room - 2 // section heading + breathing room
+	if window > detailMaxBodyRows {
+		window = detailMaxBodyRows
+	}
+	if window < 1 {
+		window = 1
+	}
+	return window
 }
 
 // descLabel is the section heading and stable viewport counter. Unlike a
 // trailing "+N more" row it does not jump around as the body scrolls.
-func descLabel(width, start, visible, total int) string {
-	left := lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Render("DESCRIPTION")
+func descLabel(label string, width, start, visible, total int) string {
+	left := lipgloss.NewStyle().Bold(true).Foreground(ColAccent).Render(label)
 	right := MutedStyle.Render(fmt.Sprintf("%d–%d / %d", start+1, start+visible, total))
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -678,9 +803,35 @@ func parseDeadline(s string) (*time.Time, error) {
 	return &d, nil
 }
 
+func shortTaskID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// resolveTaskPrefix resolves one active task ID prefix for the Parent field.
+func (m BoardModel) resolveTaskPrefix(prefix string) (task.Task, error) {
+	prefix = strings.TrimSpace(prefix)
+	var matches []task.Task
+	for _, t := range m.board.Active() {
+		if strings.HasPrefix(t.ID, prefix) {
+			matches = append(matches, t)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return task.Task{}, fmt.Errorf("no task ID starts with %q", prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		return task.Task{}, fmt.Errorf("task ID %q is ambiguous", prefix)
+	}
+}
+
 // openForm puts the model into the add/edit form, seeded with the given
 // values and focused on the title.
-func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
+func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time, parentID string) {
 	m.mode = modeInput
 	m.editID = editID
 	m.field = fieldTitle
@@ -693,6 +844,7 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time) {
 	m.title.SetValue(title)
 	m.desc.SetValue(desc)
 	m.deadline.SetValue(dl)
+	m.parent.SetValue(shortTaskID(parentID))
 	m.applyFieldFocus() // sizes the fields too
 }
 
@@ -705,6 +857,7 @@ func (m *BoardModel) closeForm() {
 	m.title.Blur()
 	m.desc.Blur()
 	m.deadline.Blur()
+	m.parent.Blur()
 }
 
 // applyFieldFocus puts the cursor in m.field's widget and takes it off the
@@ -713,6 +866,7 @@ func (m *BoardModel) applyFieldFocus() {
 	m.title.Blur()
 	m.desc.Blur()
 	m.deadline.Blur()
+	m.parent.Blur()
 	switch m.field {
 	case fieldTitle:
 		m.title.Focus()
@@ -722,6 +876,9 @@ func (m *BoardModel) applyFieldFocus() {
 	case fieldDeadline:
 		m.deadline.Focus()
 		m.deadline.CursorEnd()
+	case fieldParent:
+		m.parent.Focus()
+		m.parent.CursorEnd()
 	}
 	if m.field == fieldDeadline {
 		m.seedPicker()
@@ -752,12 +909,12 @@ func (m BoardModel) renderForm() string {
 		MutedStyle.Render(strings.Repeat("─", contentWidth)),
 		formLabel(fieldTitle, m.field, "TITLE", "REQUIRED", contentWidth),
 		m.title.View(),
-		"",
 		formLabel(fieldDesc, m.field, "DESCRIPTION", "CTRL+J  NEW LINE", contentWidth),
 		m.desc.View(),
-		"",
 		formLabel(fieldDeadline, m.field, "DEADLINE", "OPTIONAL · DD/MM/YYYY", contentWidth),
 		m.deadline.View(),
+		formLabel(fieldParent, m.field, "PARENT", "OPTIONAL · TASK ID", contentWidth),
+		m.parent.View(),
 	}
 	if m.err != "" {
 		rows = append(rows, lipgloss.NewStyle().Foreground(AccentFor(task.StatusBlocked)).
@@ -798,6 +955,9 @@ func formLabel(field, focused int, label, hint string, width int) string {
 func (m BoardModel) renderFooter() string {
 	switch m.mode {
 	case modeMove:
+		if m.err != "" {
+			return HelpStyle.Render("! " + m.err + " · h/l reposition · enter drop · esc cancel")
+		}
 		return HelpStyle.Render("move: h/l reposition · enter drop · esc cancel")
 	case modeConfirm:
 		return HelpStyle.Render("delete this task? y / n")
@@ -805,12 +965,19 @@ func (m BoardModel) renderFooter() string {
 	if m.err != "" {
 		return HelpStyle.Render("! " + m.err)
 	}
+	if m.familyID != "" {
+		name := shortTaskID(m.familyID)
+		if parent, ok := m.board.TaskByID(m.familyID); ok {
+			name = parent.Title
+		}
+		return HelpStyle.Render("family: " + name + " · f show all · s add subtask · enter open · m grab · ? help · q quit")
+	}
 	focusLabel := "item"
 	if m.focus == focusColumn {
 		focusLabel = "column"
 	}
 	return HelpStyle.Render(
-		"focus: " + focusLabel + " (ctrl+t) · hjkl move · enter open · a add · e edit · d delete · m grab · tab switch · ? help · q quit")
+		"focus: " + focusLabel + " (ctrl+t) · hjkl move · enter open · a add · s subtask · f family · e edit · d delete · m grab · tab switch · ? help · q quit")
 }
 
 // truncate shortens s to fit n display columns, appending an ellipsis when
@@ -885,7 +1052,7 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		}
 	case "G":
 		if m.focus == focusItem {
-			m.sel[m.col] = len(m.board.ByStatus(m.currentStatus())) - 1
+			m.sel[m.col] = len(m.visibleByStatus(m.currentStatus())) - 1
 		}
 	case "enter":
 		if _, ok := m.selectedTask(); !ok {
@@ -895,13 +1062,37 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.mode = modeDetail
 		m.detailScroll = 0
 	case "a":
-		m.openForm("", "", "", nil)
+		m.openForm("", "", "", nil, "")
+	case "s":
+		t, ok := m.selectedTask()
+		if !ok {
+			return m, nil
+		}
+		m.openForm("", "", "", nil, m.board.FamilyRootID(t))
 	case "e":
 		t, ok := m.selectedTask()
 		if !ok {
 			return m, nil
 		}
-		m.openForm(t.ID, t.Title, t.Description, t.Deadline)
+		m.openForm(t.ID, t.Title, t.Description, t.Deadline, t.ParentID)
+	case "f":
+		if m.familyID != "" {
+			selectedID := ""
+			if t, ok := m.selectedTask(); ok {
+				selectedID = t.ID
+			}
+			m.familyID = ""
+			if !m.selectTaskID(selectedID) {
+				m.clampSelection()
+			}
+			break
+		}
+		t, ok := m.selectedTask()
+		if !ok {
+			return m, nil
+		}
+		m.familyID = m.board.FamilyRootID(t)
+		m.selectTaskID(t.ID)
 	case "d":
 		if _, ok := m.selectedTask(); !ok {
 			return m, nil
@@ -944,27 +1135,56 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		title := strings.TrimSpace(m.title.Value())
 		if title == "" {
 			m.err = "title must not be blank"
+			m.sizeForm()
 			return m, nil // stay in the form
 		}
 		deadline, err := parseDeadline(m.deadline.Value())
 		if err != nil {
 			m.err = err.Error()
+			m.sizeForm()
 			return m, nil // stay in the form
 		}
 		desc := strings.TrimSpace(m.desc.Value())
+		parentID := ""
+		if parentText := strings.TrimSpace(m.parent.Value()); parentText != "" {
+			parent, err := m.resolveTaskPrefix(parentText)
+			if err != nil {
+				m.err = "parent: " + err.Error()
+				m.sizeForm()
+				return m, nil
+			}
+			parentID = parent.ID
+		}
 
+		selectedID := m.editID
 		if m.editID != "" {
-			if err := m.board.Edit(m.editID, title, desc, deadline, m.now()); err != nil {
+			if err := m.board.EditWithParent(m.editID, parentID, title, desc, deadline, m.now()); err != nil {
 				m.err = err.Error()
+				m.sizeForm()
 				return m, nil
 			}
 		} else {
-			m.board.Add(title, desc, deadline, m.now())
-			m.col = 0
-			m.sel[0] = len(m.board.ByStatus(m.board.Statuses()[0])) - 1
+			if parentID == "" {
+				selectedID = m.board.Add(title, desc, deadline, m.now()).ID
+			} else {
+				added, err := m.board.AddChild(parentID, title, desc, deadline, m.now())
+				if err != nil {
+					m.err = err.Error()
+					m.sizeForm()
+					return m, nil
+				}
+				selectedID = added.ID
+			}
+		}
+		if m.familyID != "" {
+			if saved, ok := m.board.TaskByID(selectedID); ok {
+				m.familyID = m.board.FamilyRootID(saved)
+			}
 		}
 		m.closeForm()
-		m.clampSelection()
+		if !m.selectTaskID(selectedID) {
+			m.clampSelection()
+		}
 		return m, dirty()
 	}
 
@@ -1009,6 +1229,8 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		// jumps to it. A half-typed date leaves the cursor where it was.
 		m.seedPicker()
 		m.sizeForm()
+	case fieldParent:
+		m.parent, cmd = m.parent.Update(k)
 	}
 	return m, cmd
 }
@@ -1026,7 +1248,14 @@ func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			m.mode = modeNormal
 			return m, nil
 		}
-		m.openForm(t.ID, t.Title, t.Description, t.Deadline)
+		m.openForm(t.ID, t.Title, t.Description, t.Deadline, t.ParentID)
+	case "s":
+		t, ok := m.selectedTask()
+		if !ok {
+			m.mode = modeNormal
+			return m, nil
+		}
+		m.openForm("", "", "", nil, m.board.FamilyRootID(t))
 	case "d":
 		if _, ok := m.selectedTask(); !ok {
 			m.mode = modeNormal
@@ -1058,7 +1287,15 @@ func (m BoardModel) clampDetailScroll(offset int) int {
 		return 0
 	}
 	width := m.popupWidth() - 2 // panel padding, same budget renderDetail uses
-	max := len(m.detailBodyLines(t, width)) - detailMaxBodyRows
+	body := m.detailBodyLines(t, width)
+	if len(body) == 0 {
+		body = []string{"No description or subtasks."}
+	}
+	head := m.detailHead(t, width)
+	when := m.detailWhen(t, width, head)
+	room := m.detailBudget() - rowsHeight(head) - rowsHeight(when) - rowsHeight(detailFoot(false, width))
+	window := detailWindowRows(room)
+	max := len(body) - window
 	if max < 0 {
 		max = 0
 	}
@@ -1128,7 +1365,7 @@ func (m *BoardModel) shiftGrabbed(delta int) bool {
 		return false
 	}
 	m.col = next
-	items := m.board.ByStatus(m.board.Statuses()[next])
+	items := m.visibleByStatus(m.board.Statuses()[next])
 	for i, t := range items {
 		if t.ID == m.grabID {
 			m.sel[next] = i
@@ -1152,6 +1389,9 @@ func (m BoardModel) updateConfirm(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.err = err.Error()
 		return m, nil
 	}
+	if m.familyID == t.ID {
+		m.familyID = ""
+	}
 	m.clampSelection()
 	return m, dirty()
 }
@@ -1170,7 +1410,7 @@ func (m *BoardModel) moveColumn(delta int) {
 
 // moveItem shifts the cursor within the focused column, clamped at both ends.
 func (m *BoardModel) moveItem(delta int) {
-	n := len(m.board.ByStatus(m.currentStatus()))
+	n := len(m.visibleByStatus(m.currentStatus()))
 	if n == 0 {
 		m.sel[m.col] = 0
 		return

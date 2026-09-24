@@ -8,9 +8,11 @@
 //
 //	gotodo init                                              # one dev board in ./.deadline/
 //	gotodo add "Rewrite the parser" -desc "..." -deadline 04/08/2026
+//	gotodo add "Write parser tests" -parent 3fa1c9e2
 //	gotodo board                                             # board type + accepted columns
 //	gotodo list
 //	gotodo list -status blocked
+//	gotodo show 3fa1c9e2
 //	gotodo move 3fa1c9e2 testing-review
 //	gotodo edit 3fa1c9e2 -desc "Ready for review"
 //	gotodo delete 3fa1c9e2
@@ -49,9 +51,9 @@ const projectDirName = ".deadline"
 const projectBoardFile = "board.json"
 
 // addUsage is printed for `add -h` and malformed add invocations.
-const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...]`
+const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...] [-parent ID]`
 
-const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY]`
+const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-parent ID]`
 
 // version is the built revision, stamped at build time:
 //
@@ -104,6 +106,8 @@ func run(argv []string) error {
 		return runAdd(path, args[1:])
 	case "list":
 		return runList(path, args[1:])
+	case "show":
+		return runShow(path, args[1:])
 	case "board":
 		return runBoard(path, args[1:])
 	case "move":
@@ -116,7 +120,7 @@ func run(argv []string) error {
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, board, add, list, move, edit, delete or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete or version)", args[0])
 	}
 }
 
@@ -307,6 +311,7 @@ func runAdd(path string, args []string) error {
 	desc := fs.String("desc", "", "task description")
 	deadlineStr := fs.String("deadline", "", "deadline as DD/MM/YYYY")
 	statusStr := fs.String("status", "", "starting column")
+	parentStr := fs.String("parent", "", "parent task ID prefix")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -338,17 +343,34 @@ func runAdd(path string, args []string) error {
 		}
 		status = s
 	}
+	parentID := ""
+	if *parentStr != "" {
+		parent, err := resolveID(board, *parentStr)
+		if err != nil {
+			return fmt.Errorf("parent: %w", err)
+		}
+		parentID = parent.ID
+	}
 	now := time.Now()
-	t := board.Add(title, *desc, deadline, now)
+	var t *task.Task
+	if parentID == "" {
+		t = board.Add(title, *desc, deadline, now)
+	} else {
+		t, err = board.AddChild(parentID, title, *desc, deadline, now)
+		if err != nil {
+			return err
+		}
+	}
+	id, addedTitle := t.ID, t.Title
 	if status != board.Statuses()[0] {
-		if err := board.Move(t.ID, status, now); err != nil {
+		if err := board.Move(id, status, now); err != nil {
 			return err
 		}
 	}
 	if err := board.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("added %s [%s] %s\n", shortID(t.ID), status, t.Title)
+	fmt.Printf("added %s [%s] %s\n", shortID(id), status, addedTitle)
 	return nil
 }
 
@@ -372,6 +394,7 @@ func parseHeadlessDeadline(value string) (*time.Time, error) {
 func runList(path string, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	statusStr := fs.String("status", "", "only show one column")
+	parentStr := fs.String("parent", "", "only show children of one task")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -395,15 +418,33 @@ func runList(path string, args []string) error {
 		}
 		filter = s
 	}
+	parentID := ""
+	if *parentStr != "" {
+		parent, err := resolveID(board, *parentStr)
+		if err != nil {
+			return fmt.Errorf("parent: %w", err)
+		}
+		parentID = parent.ID
+	}
 	printed := 0
 	for _, s := range board.Statuses() {
 		if filter != "" && s != filter {
 			continue
 		}
 		for _, t := range board.ByStatus(s) {
+			if parentID != "" && t.ParentID != parentID {
+				continue
+			}
 			line := fmt.Sprintf("%s [%s] %s", shortID(t.ID), s, t.Title)
 			if t.Deadline != nil {
 				line += " · due " + t.Deadline.In(now.Location()).Format(dateLayout)
+			}
+			if t.ParentID != "" {
+				if parent, ok := board.TaskByID(t.ParentID); ok {
+					line += " · parent " + shortID(parent.ID) + " " + parent.Title
+				}
+			} else if done, total := board.ChildProgress(t.ID); total > 0 {
+				line += fmt.Sprintf(" · subtasks %d/%d", done, total)
 			}
 			fmt.Println(line)
 			printed++
@@ -411,6 +452,51 @@ func runList(path string, args []string) error {
 	}
 	if printed == 0 {
 		fmt.Println("no tasks")
+	}
+	return nil
+}
+
+// runShow prints one task with its relationship context and direct subtasks.
+func runShow(path string, args []string) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Println("usage: gotodo show <id>")
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("usage: gotodo show <id>")
+	}
+	board, err := task.Load(path)
+	if err != nil {
+		return err
+	}
+	board.SweepArchive(time.Now())
+	t, err := resolveID(board, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s [%s] %s\n", shortID(t.ID), t.Status, t.Title)
+	if t.ParentID != "" {
+		if parent, ok := board.TaskByID(t.ParentID); ok {
+			fmt.Printf("parent: %s [%s] %s\n", shortID(parent.ID), parent.Status, parent.Title)
+		}
+	}
+	if t.Deadline != nil {
+		fmt.Printf("deadline: %s\n", t.Deadline.In(time.Local).Format(dateLayout))
+	}
+	if t.Description != "" {
+		fmt.Printf("description:\n%s\n", t.Description)
+	}
+	children := board.Children(t.ID)
+	if len(children) > 0 {
+		done, total := board.ChildProgress(t.ID)
+		fmt.Printf("subtasks: %d/%d complete\n", done, total)
+		for _, child := range children {
+			archived := ""
+			if child.Archived {
+				archived = " archived"
+			}
+			fmt.Printf("  %s [%s%s] %s\n", shortID(child.ID), child.Status, archived, child.Title)
+		}
 	}
 	return nil
 }
@@ -470,6 +556,7 @@ func runEdit(path string, args []string) error {
 	titleFlag := fs.String("title", "", "replacement title")
 	descFlag := fs.String("desc", "", "replacement description (blank clears)")
 	deadlineFlag := fs.String("deadline", "", "replacement deadline as DD/MM/YYYY (blank clears)")
+	parentFlag := fs.String("parent", "", "replacement parent ID prefix (blank detaches)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -495,6 +582,7 @@ func runEdit(path string, args []string) error {
 		return err
 	}
 	title, desc, deadline := t.Title, t.Description, t.Deadline
+	parentID := t.ParentID
 	if set["title"] {
 		title = *titleFlag
 	}
@@ -507,7 +595,17 @@ func runEdit(path string, args []string) error {
 			return err
 		}
 	}
-	if err := board.Edit(t.ID, title, desc, deadline, time.Now()); err != nil {
+	if set["parent"] {
+		parentID = ""
+		if *parentFlag != "" {
+			parent, err := resolveID(board, *parentFlag)
+			if err != nil {
+				return fmt.Errorf("parent: %w", err)
+			}
+			parentID = parent.ID
+		}
+	}
+	if err := board.EditWithParent(t.ID, parentID, title, desc, deadline, time.Now()); err != nil {
 		return err
 	}
 	if err := board.Save(); err != nil {
@@ -536,13 +634,18 @@ func runDelete(path string, args []string) error {
 	if err != nil {
 		return err
 	}
+	detached := len(board.Children(t.ID))
 	if err := board.Delete(t.ID); err != nil {
 		return err
 	}
 	if err := board.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("deleted %s [%s] %s\n", shortID(t.ID), t.Status, t.Title)
+	fmt.Printf("deleted %s [%s] %s", shortID(t.ID), t.Status, t.Title)
+	if detached > 0 {
+		fmt.Printf(" · detached %d subtasks", detached)
+	}
+	fmt.Println()
 	return nil
 }
 

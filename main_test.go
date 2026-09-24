@@ -155,10 +155,101 @@ func TestBoardReportsTypeAndColumnsWithoutStoragePath(t *testing.T) {
 }
 
 func TestHelpExitsZero(t *testing.T) {
-	for _, argv := range [][]string{{"-h"}, {"--help"}, {"init", "-h"}, {"board", "-h"}, {"list", "-h"}, {"add"}, {"add", "-h"}, {"edit"}, {"edit", "-h"}} {
+	for _, argv := range [][]string{{"-h"}, {"--help"}, {"init", "-h"}, {"board", "-h"}, {"list", "-h"}, {"show", "-h"}, {"add"}, {"add", "-h"}, {"edit"}, {"edit", "-h"}} {
 		if err := run(argv); err != nil {
 			t.Errorf("run(%q) = %v, want nil", argv, err)
 		}
+	}
+}
+
+func TestHeadlessParentSubtaskWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "Parent"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := b.Tasks[0].ID
+	if err := run([]string{"add", "Child", "-parent", parent[:8]}); err != nil {
+		t.Fatalf("add child = %v", err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Tasks) != 2 || b.Tasks[1].ParentID != parent {
+		t.Fatalf("tasks = %+v, want child linked to parent", b.Tasks)
+	}
+	child := b.Tasks[1].ID
+
+	list := captureStdout(t, func() {
+		if err := run([]string{"list", "-parent", parent[:8]}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(list, "Child") || !strings.Contains(list, "parent "+parent[:8]) {
+		t.Errorf("parent-filtered list = %q", list)
+	}
+	show := captureStdout(t, func() {
+		if err := run([]string{"show", parent[:8]}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(show, "subtasks: 0/1 complete") || !strings.Contains(show, "Child") {
+		t.Errorf("show parent = %q", show)
+	}
+
+	if err := run([]string{"edit", child[:8], "-parent", ""}); err != nil {
+		t.Fatalf("detach child = %v", err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := b.TaskByID(child)
+	if !ok || got.ParentID != "" {
+		t.Fatalf("detached child = %+v, found=%v", got, ok)
+	}
+}
+
+func TestHeadlessRejectsNestedSubtasks(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "Parent"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := b.Tasks[0].ID
+	if err := run([]string{"add", "Child", "-parent", parent[:8]}); err != nil {
+		t.Fatal(err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := b.Tasks[1].ID
+	if err := run([]string{"add", "Grandchild", "-parent", child[:8]}); err == nil {
+		t.Fatal("nested add = nil, want an error")
 	}
 }
 

@@ -103,8 +103,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case archiveTickMsg:
+		selected := ""
+		if t, ok := m.board.selectedTask(); ok {
+			selected = t.ID
+		}
 		if m.store.SweepArchive(m.now()) > 0 {
-			m.board.clampSelection()
+			m.board.reconcileFamily(selected)
 			return m, tea.Batch(dirty(), archiveTick())
 		}
 		return m, archiveTick()
@@ -117,6 +121,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// yanked away mid-interaction; the next tick retries instead.
 		if m.board.mode == modeNormal && !m.store.Dirty() {
 			if changed, _ := m.boardChanged(); changed {
+				selected := ""
+				if t, ok := m.board.selectedTask(); ok {
+					selected = t.ID
+				}
 				// Clean means memory holds nothing the disk lacks, so a
 				// wholesale reload drops nothing of ours. Tombstones are
 				// carried over so a concurrently re-saved deleted task is
@@ -124,7 +132,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if fresh, err := task.Load(m.store.Path()); err == nil {
 					fresh.CarryTombstonesFrom(m.store)
 					*m.store = *fresh
-					m.board.clampSelection()
+					m.board.reconcileFamily(selected)
 					m.noteBoardStat()
 				}
 			}
@@ -265,6 +273,8 @@ func (m AppModel) renderHelp() string {
 		{"g G", "first / last task in column"},
 		{"enter", "expand the selected task in a popup (e edit, d delete, esc close)"},
 		{"a", "add a task"},
+		{"s", "add a subtask to the selected task's family"},
+		{"f", "focus on the selected parent and its subtasks"},
 		{"e", "edit the selected task"},
 		{"d", "delete the selected task (confirms)"},
 		{"ctrl+j", "new line, while writing a description"},

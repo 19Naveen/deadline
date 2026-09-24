@@ -94,6 +94,83 @@ func TestBoardDelete(t *testing.T) {
 	}
 }
 
+func TestBoardParentAndSubtaskLifecycle(t *testing.T) {
+	var b Board
+	parent := b.Add("Parent", "", nil, ref).ID
+	child, err := b.AddChild(parent, "Child", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentID != parent {
+		t.Fatalf("ParentID = %q, want %q", child.ParentID, parent)
+	}
+	if got := b.Children(parent); len(got) != 1 || got[0].ID != child.ID {
+		t.Fatalf("Children = %+v, want child", got)
+	}
+	if done, total := b.ChildProgress(parent); done != 0 || total != 1 {
+		t.Fatalf("progress = %d/%d, want 0/1", done, total)
+	}
+	if err := b.Move(parent, StatusDone, ref); err == nil {
+		t.Fatal("Move(parent to done) = nil with unfinished child")
+	}
+	if err := b.Move(child.ID, StatusDone, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Move(parent, StatusDone, ref); err != nil {
+		t.Fatalf("Move(parent after child) = %v", err)
+	}
+	if err := b.Edit(child.ID, "Renamed child", "detail", nil, ref); err != nil {
+		t.Fatalf("Edit child under completed parent = %v", err)
+	}
+	if err := b.Move(child.ID, StatusDoing, ref); err == nil {
+		t.Fatal("reopen child under completed parent = nil, want error")
+	}
+	if done, total := b.ChildProgress(parent); done != 1 || total != 1 {
+		t.Fatalf("progress = %d/%d, want 1/1", done, total)
+	}
+}
+
+func TestBoardRejectsInvalidHierarchy(t *testing.T) {
+	var b Board
+	parent := b.Add("Parent", "", nil, ref).ID
+	child, err := b.AddChild(parent, "Child", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.AddChild(child.ID, "Grandchild", "", nil, ref); err == nil {
+		t.Error("AddChild beneath child = nil, want error")
+	}
+	if err := b.EditWithParent(parent, child.ID, "Parent", "", nil, ref); err == nil {
+		t.Error("reparent task with children = nil, want error")
+	}
+	if err := b.EditWithParent(child.ID, child.ID, "Child", "", nil, ref); err == nil {
+		t.Error("self-parent edit = nil, want error")
+	}
+	if err := b.EditWithParent(child.ID, "", "Child", "", nil, ref); err != nil {
+		t.Fatalf("detach child = %v", err)
+	}
+	if b.Tasks[1].ParentID != "" {
+		t.Errorf("ParentID = %q after detach", b.Tasks[1].ParentID)
+	}
+}
+
+func TestBoardDeleteParentDetachesChildren(t *testing.T) {
+	var b Board
+	parent := b.Add("Parent", "", nil, ref).ID
+	child, err := b.AddChild(parent, "Child", "", nil, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID := child.ID
+	if err := b.Delete(parent); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := b.TaskByID(childID)
+	if !ok || got.ParentID != "" {
+		t.Fatalf("child after parent delete = %+v, found=%v", got, ok)
+	}
+}
+
 func TestBoardAddSetsDirty(t *testing.T) {
 	var b Board
 	if b.Dirty() {

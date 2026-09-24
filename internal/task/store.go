@@ -40,6 +40,7 @@ func Load(path string) (*Board, error) {
 	if err := b.normalize(); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	b.snapshot()
 	return b, nil
 }
 
@@ -76,7 +77,7 @@ func (b *Board) normalize() error {
 			b.Tasks[i].Status = b.Statuses()[0]
 		}
 	}
-	return nil
+	return b.validateHierarchy()
 }
 
 func equalStatuses(a, b []Status) bool {
@@ -108,18 +109,59 @@ func (b *Board) mergeDisk() error {
 	if err != nil {
 		return err
 	}
-	known := make(map[string]bool, len(b.Tasks))
-	for _, t := range b.Tasks {
-		known[t.ID] = true
-	}
+	diskByID := make(map[string]Task, len(disk.Tasks))
 	for _, t := range disk.Tasks {
-		if _, gone := b.deleted[t.ID]; gone {
-			continue // deleted this session: never merge back
+		diskByID[t.ID] = t
+	}
+	merged := make([]Task, 0, len(b.Tasks)+len(disk.Tasks))
+	known := make(map[string]bool, cap(merged))
+	changed := false
+	for _, local := range b.Tasks {
+		diskTask, onDisk := diskByID[local.ID]
+		_, existed := b.baseline[local.ID]
+		_, localChange := b.changed[local.ID]
+		if existed && !onDisk {
+			// Another writer deleted this task. Deletion wins over stale local
+			// snapshots and edits so a modal TUI cannot resurrect it.
+			if b.deleted == nil {
+				b.deleted = make(map[string]struct{})
+			}
+			b.deleted[local.ID] = struct{}{}
+			changed = true
+			continue
 		}
-		if !known[t.ID] {
-			b.Tasks = append(b.Tasks, t)
-			b.dirty = true
+		if onDisk && !localChange {
+			merged = append(merged, diskTask)
+		} else {
+			merged = append(merged, local)
 		}
+		known[local.ID] = true
+	}
+	for _, diskTask := range disk.Tasks {
+		if _, gone := b.deleted[diskTask.ID]; gone {
+			continue
+		}
+		if !known[diskTask.ID] {
+			merged = append(merged, diskTask)
+			changed = true
+		}
+	}
+	// A child concurrently added beneath a parent deleted by this session is
+	// kept as a root task rather than written with a dangling relationship.
+	for i := range merged {
+		if _, gone := b.deleted[merged[i].ParentID]; gone {
+			merged[i].ParentID = ""
+			changed = true
+		}
+	}
+	candidate := *b
+	candidate.Tasks = merged
+	if err := candidate.validateHierarchy(); err != nil {
+		return err
+	}
+	b.Tasks = merged
+	if changed {
+		b.dirty = true
 	}
 	return nil
 }
@@ -175,5 +217,6 @@ func (b *Board) Save() error {
 		return fmt.Errorf("rename temp: %w", err)
 	}
 	b.dirty = false
+	b.snapshot()
 	return nil
 }
