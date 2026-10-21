@@ -15,7 +15,7 @@ along as you work:
    inspect the family with `gotodo show <id-prefix>` or `list -parent`.
 5. `gotodo move <id-prefix> <active-column>` when starting, then through the
    reported pipeline's review/terminal columns as work is verified and done.
-6. `gotodo edit <id-prefix> [flags]` for title, description, deadline, or parent changes.
+6. `gotodo edit <id-prefix> [flags]` for title, description, deadline, parent, or worktree changes.
 7. `gotodo delete <id-prefix>` only for cards logged by mistake — no undo.
 
 Headless commands only (never run bare `gotodo`, it opens a TUI). If `gotodo`

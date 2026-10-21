@@ -99,8 +99,8 @@ func TestSweepArchiveKeepsParentWithActiveSubtask(t *testing.T) {
 	if err := b.Move(parent, StatusDone, ref.Add(-30*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	// Defensive persisted-state scenario: even if a stale writer leaves an
-	// active child under a completed parent, the sweep must retain the parent.
+	// An active child under a completed parent (bad persisted state) keeps
+	// the parent unarchived.
 	b.Tasks[1].Status = StatusDoing
 	if n := b.SweepArchive(ref); n != 0 {
 		t.Fatalf("SweepArchive = %d, want parent retained", n)

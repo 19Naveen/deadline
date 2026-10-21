@@ -6,12 +6,8 @@ import "time"
 // swept off the board into the archive.
 const ArchiveAfter = 14 * 24 * time.Hour
 
-// SweepArchive archives every task in the board's terminal column (done on
-// personal boards, shipped on dev boards) that has sat there for at least
-// ArchiveAfter, and reports how many it moved. It is idempotent: an already
-// archived task is skipped. Tasks reopened out of the terminal column are
-// never archived, because CompletedAt only reports a time for tasks
-// currently in it.
+// SweepArchive archives tasks that have sat in the terminal column for at
+// least ArchiveAfter (with all subtasks done) and reports how many it moved.
 func (b *Board) SweepArchive(now time.Time) int {
 	moved := 0
 	done := b.DoneStatus()

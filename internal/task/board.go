@@ -15,22 +15,17 @@ var ErrNotFound = errors.New("task not found")
 // rather than stored separately, so a move is a single field write.
 type Board struct {
 	Tasks []Task `json:"tasks"`
-	// Columns is the board's left-to-right column order. Empty means a file
-	// written before per-board columns existed, which reads as the personal
-	// preset; Statuses resolves that so callers never branch on it.
+	// Columns is the left-to-right column order. Empty (older files) means
+	// the personal preset; use Statuses rather than reading it directly.
 	Columns []Status `json:"columns,omitempty"`
 
-	path  string // where Save writes; unexported so it stays out of the JSON
-	dirty bool   // true when there are unsaved mutations; unexported, not serialised
-	// deleted is the set of task IDs removed by Delete this session.
-	// mergeDisk consults it so a deleted task is not re-appended from the
-	// disk copy at Save time (which would resurrect every delete).
-	// Unexported, never serialised; IDs are never reused, so entries stay
-	// valid for the session's lifetime.
+	path  string // where Save writes
+	dirty bool   // unsaved mutations pending
+	// deleted holds tombstones: IDs removed by Delete this session, so
+	// mergeDisk never re-appends them from the disk copy at Save time.
 	deleted map[string]struct{}
-	// baseline records IDs present at the last load/save; changed records task
-	// IDs mutated by this session. Together they let mergeDisk preserve remote
-	// deletes and edits without sacrificing local writes.
+	// baseline is the IDs present at the last load/save; changed is the IDs
+	// mutated this session. mergeDisk uses both to keep remote and local edits.
 	baseline map[string]struct{}
 	changed  map[string]struct{}
 }
@@ -44,16 +39,13 @@ func (b *Board) Statuses() []Status {
 	return Statuses
 }
 
-// DoneStatus is the board's terminal column: done on personal boards,
-// shipped on dev boards. Archiving, analytics and urgency all key off this,
-// never off a hard-coded status.
+// DoneStatus is the board's terminal (last) column, e.g. done or shipped.
 func (b *Board) DoneStatus() Status {
 	cols := b.Statuses()
 	return cols[len(cols)-1]
 }
 
-// ColumnIndex is the column position of s, 0-based. Unknown statuses report
-// -1 so callers can tell "not on this board" apart from "first column".
+// ColumnIndex is the 0-based column position of s, or -1 if not on the board.
 func (b *Board) ColumnIndex(s Status) int {
 	for i, c := range b.Statuses() {
 		if c == s {
@@ -66,9 +58,8 @@ func (b *Board) ColumnIndex(s Status) int {
 // HasStatus reports whether s is a column on this board.
 func (b *Board) HasStatus(s Status) bool { return b.ColumnIndex(s) >= 0 }
 
-// SetColumns replaces the board's column layout (used when initialising a
-// new board file) and marks the board dirty. Direct assignment would bypass
-// dirty tracking and a later Save would skip the write.
+// SetColumns replaces the column layout and marks the board dirty, so Save
+// writes it (direct assignment would bypass dirty tracking).
 func (b *Board) SetColumns(cols []Status) {
 	b.Columns = append([]Status(nil), cols...)
 	b.dirty = true
@@ -96,9 +87,8 @@ func (b *Board) Dirty() bool { return b.dirty }
 // Path reports the file Save writes to ("" when unset).
 func (b *Board) Path() string { return b.path }
 
-// Add appends a new todo task and returns a pointer into b.Tasks. The
-// pointer is only valid until the next Add — take the ID off it, never
-// retain it.
+// Add appends a new todo task. The returned pointer is only valid until the
+// next append; keep the ID, not the pointer.
 func (b *Board) Add(title, description string, deadline *time.Time, now time.Time) *Task {
 	b.Tasks = append(b.Tasks, NewTask(
 		strings.TrimSpace(title), strings.TrimSpace(description), deadline, now))
@@ -202,7 +192,7 @@ func (b *Board) validateParent(taskID, parentID string) error {
 }
 
 // Move changes a task's column and records the transition. Moving to the
-// column it already occupies is a no-op, so the history stays meaningful.
+// current column is a no-op.
 func (b *Board) Move(id string, to Status, now time.Time) error {
 	t, err := b.find(id)
 	if err != nil {
@@ -230,8 +220,7 @@ func (b *Board) Move(id string, to Status, now time.Time) error {
 }
 
 // Edit replaces the title, description and deadline. Blank titles are
-// rejected so the board cannot grow unreadable empty cards; a nil deadline
-// clears any existing one.
+// rejected; a nil deadline clears it.
 func (b *Board) Edit(id, title, description string, deadline *time.Time, now time.Time) error {
 	t, err := b.find(id)
 	if err != nil {
@@ -265,9 +254,25 @@ func (b *Board) EditWithParent(id, parentID, title, description string, deadline
 	return nil
 }
 
-// Delete removes a task permanently. Deleting a parent detaches its children
-// rather than cascading data loss. The ID is recorded as a tombstone so a
-// later Save does not merge it back from the on-disk copy.
+// SetWorktree records where a task's work lives (a git worktree path or
+// branch); blank clears it. Unchanged values are a no-op.
+func (b *Board) SetWorktree(id, worktree string, now time.Time) error {
+	t, err := b.find(id)
+	if err != nil {
+		return err
+	}
+	worktree = strings.TrimSpace(worktree)
+	if t.Worktree == worktree {
+		return nil
+	}
+	t.Worktree = worktree
+	t.UpdatedAt = now
+	b.markChanged(id)
+	return nil
+}
+
+// Delete removes a task and records a tombstone. A deleted parent's children
+// are detached, not deleted.
 func (b *Board) Delete(id string) error {
 	for i := range b.Tasks {
 		if b.Tasks[i].ID == id {
@@ -320,9 +325,8 @@ func (b *Board) validateHierarchy() error {
 	return nil
 }
 
-// CarryTombstonesFrom copies the deleted-ID tombstones from prev onto b, so
-// a wholesale reload (live refresh) does not lose track of this session's
-// deletes. Call before replacing *b with a freshly loaded board.
+// CarryTombstonesFrom copies prev's tombstones onto b; call it before
+// replacing a board with a freshly loaded one.
 func (b *Board) CarryTombstonesFrom(prev *Board) {
 	if len(prev.deleted) == 0 {
 		return
@@ -336,7 +340,6 @@ func (b *Board) CarryTombstonesFrom(prev *Board) {
 }
 
 // ByStatus returns the non-archived tasks in one column, in insertion order.
-// Archived tasks live on the Archive page and never appear on the board.
 func (b *Board) ByStatus(s Status) []Task {
 	out := make([]Task, 0, len(b.Tasks))
 	for _, t := range b.Tasks {
@@ -372,8 +375,7 @@ func (b *Board) ArchivedTasks() []Task {
 	return out
 }
 
-// archivedStamp falls back to UpdatedAt for a task archived by an older
-// build that did not record ArchivedAt.
+// archivedStamp falls back to UpdatedAt for tasks saved without ArchivedAt.
 func archivedStamp(t Task) time.Time {
 	if t.ArchivedAt != nil {
 		return *t.ArchivedAt

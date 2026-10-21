@@ -8,9 +8,8 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// forceColor turns lipgloss styling on under `go test`, where there is no
-// TTY and styles would otherwise render as plain text. Restored afterwards
-// so no other test observes it.
+// forceColor enables styling for one test; without a TTY lipgloss renders
+// plain text.
 func forceColor(t *testing.T) {
 	t.Helper()
 	prev := lipgloss.ColorProfile()
@@ -18,8 +17,7 @@ func forceColor(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 }
 
-// mdPlain renders and strips styles: the text that survives must read as
-// the source with its markers resolved.
+// mdPlain renders src and strips the styling.
 func mdPlain(t *testing.T, src string, width int) string {
 	t.Helper()
 	return stripANSI(renderMarkdown(src, width))
@@ -93,9 +91,8 @@ func TestRenderMarkdownListsHangTheirContinuations(t *testing.T) {
 	}
 }
 
-// Pasted terminal/editor text often contains hard wraps inside a list item.
-// Markdown says those are soft wraps; every rendered continuation must keep
-// the marker's hanging indent instead of jumping back to column zero.
+// Hard-wrapped list items are soft wraps: continuations keep the hanging
+// indent.
 func TestRenderMarkdownHardWrappedListKeepsIndent(t *testing.T) {
 	src := "(1) First line from a pasted report that keeps going\n" +
 		"onto a source-wrapped continuation and then\n" +
@@ -139,8 +136,7 @@ func TestRenderMarkdownLinksAndRules(t *testing.T) {
 	}
 }
 
-// Every rendered row must fit the width it was given, styles included —
-// measured with escapes in place, the way the terminal sees it.
+// Every row fits width, measured with styling escapes in place.
 func TestRenderMarkdownRowsNeverExceedWidth(t *testing.T) {
 	srcs := []string{
 		"## Heading with **bold** and *italic* inside",

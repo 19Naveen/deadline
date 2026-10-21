@@ -14,7 +14,7 @@ Track dev work on a per-project kanban board with the `gotodo` CLI. Project and 
 3. **Log before starting:** `gotodo add "title" [-desc "detail"] [-deadline DD/MM/YYYY] [-status todo]` — it prints the id; keep its short prefix for later moves.
 4. **Group related work:** when work belongs under an existing parent task, use `gotodo add "title" -parent <parent-id>`. Inspect a family with `gotodo show <parent-id>` or `gotodo list -parent <parent-id>`. Keep hierarchy one level deep.
 5. **Move it along:** `gotodo move <id-prefix> <status>` through the exact columns reported by `gotodo board`. Any unique id prefix works. A parent cannot finish before all subtasks.
-6. **Update details through the CLI:** `gotodo edit <id-prefix> [-title "..."] [-desc "..."] [-deadline DD/MM/YYYY] [-parent <id>]`. An explicitly blank description, deadline, or parent clears it; use `move` for status.
+6. **Update details through the CLI:** `gotodo edit <id-prefix> [-title "..."] [-desc "..."] [-deadline DD/MM/YYYY] [-parent <id>] [-worktree PATH]`. Pass `-worktree` (also on `add`) when the work lives in a git worktree. An explicitly blank description, deadline, parent, or worktree clears it; use `move` for status.
 7. **Stuck:** move to `blocked` and record the reason with `edit -desc`; move back to the reported active column (`doing` or `indev`) when unblocked.
 8. **Wrong card:** `gotodo delete <id-prefix>` removes it headless — no confirm or undo. Deleting a parent detaches its subtasks; archived cards cannot be deleted headless.
 

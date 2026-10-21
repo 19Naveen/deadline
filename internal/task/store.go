@@ -22,9 +22,8 @@ func DefaultPath() (string, error) {
 // SetPath points the board at a file for later Save calls.
 func (b *Board) SetPath(p string) { b.path = p }
 
-// Load reads the board from disk. A missing file yields an empty board so
-// the first run is not an error; malformed JSON is an error so a bad file is
-// never silently overwritten with an empty board.
+// Load reads the board from disk. A missing file yields an empty board;
+// malformed JSON is an error so a bad file is never overwritten.
 func Load(path string) (*Board, error) {
 	b := &Board{path: path}
 	data, err := os.ReadFile(path)
@@ -44,12 +43,9 @@ func Load(path string) (*Board, error) {
 	return b, nil
 }
 
-// normalize migrates and validates a freshly unmarshalled board. Files
-// written before review/testing merged into testing-review are upgraded
-// losslessly (status and transition history); files whose columns match
-// neither known schema are rejected rather than guessed at. Genuinely
-// unknown task statuses still coerce to the first column so a hand-edited
-// task stays reachable — the same rule the pre-column format used.
+// normalize migrates and validates a loaded board: legacy review/testing
+// statuses become testing-review, unknown column layouts are rejected, and
+// unknown task statuses fall back to the first column so they stay reachable.
 func (b *Board) normalize() error {
 	for i := range b.Tasks {
 		if b.Tasks[i].Status == Status("review") || b.Tasks[i].Status == Status("testing") {
@@ -64,7 +60,7 @@ func (b *Board) normalize() error {
 			}
 		}
 	}
-	// The pre-merge six-column dev layout upgrades to the five-column one.
+	// Legacy six-column dev layout upgrades to the five-column one.
 	legacyDev := []Status{StatusTodo, StatusInDev, Status("review"), Status("testing"), StatusBlocked, StatusShipped}
 	if equalStatuses(b.Columns, legacyDev) {
 		b.Columns = append([]Status(nil), DevColumns...)
@@ -100,10 +96,8 @@ func columnNames(cols []Status) string {
 	return strings.Join(names, ", ")
 }
 
-// mergeDisk pulls in tasks written to the file since this board was
-// loaded. Callers must hold the board lock. A missing file means a fresh
-// board with nothing to merge; this session's tasks always win over the
-// disk copy on ID conflicts.
+// mergeDisk pulls in tasks written to the file since this board was loaded.
+// Callers must hold the board lock. Locally changed tasks win on ID conflicts.
 func (b *Board) mergeDisk() error {
 	disk, err := Load(b.path)
 	if err != nil {
@@ -121,8 +115,7 @@ func (b *Board) mergeDisk() error {
 		_, existed := b.baseline[local.ID]
 		_, localChange := b.changed[local.ID]
 		if existed && !onDisk {
-			// Another writer deleted this task. Deletion wins over stale local
-			// snapshots and edits so a modal TUI cannot resurrect it.
+			// Deleted by another writer: deletion wins over local edits.
 			if b.deleted == nil {
 				b.deleted = make(map[string]struct{})
 			}
@@ -146,8 +139,7 @@ func (b *Board) mergeDisk() error {
 			changed = true
 		}
 	}
-	// A child concurrently added beneath a parent deleted by this session is
-	// kept as a root task rather than written with a dangling relationship.
+	// Detach children whose parent this session deleted.
 	for i := range merged {
 		if _, gone := b.deleted[merged[i].ParentID]; gone {
 			merged[i].ParentID = ""
@@ -166,15 +158,9 @@ func (b *Board) mergeDisk() error {
 	return nil
 }
 
-// Save merges concurrent writers and persists the board atomically: temp
-// file first, then rename. It takes a brief exclusive lock, reloads the
-// file, and pulls in any tasks written since this board was loaded — so an
-// agent logging while the TUI is open (or two agents at once) never drops
-// the other's cards. Tasks this session changed win over the disk copy;
-// tasks only on disk are appended in disk order. Each writer still gets a
-// unique temp file (via os.CreateTemp) so concurrent replacements never
-// race over the same intermediate name. A clean board with nothing new on
-// disk writes nothing, so read-only sessions stay read-only.
+// Save merges in concurrent writers' changes under the board lock, then
+// writes atomically via a unique temp file and rename. A clean board with
+// nothing new on disk writes nothing.
 func (b *Board) Save() error {
 	if b.path == "" {
 		return errors.New("board has no path; call SetPath or Load first")

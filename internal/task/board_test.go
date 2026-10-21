@@ -185,7 +185,7 @@ func TestBoardAddSetsDirty(t *testing.T) {
 func TestBoardMoveToSameStatusDoesNotSetDirty(t *testing.T) {
 	var b Board
 	id := b.Add("[Task title]", "", nil, ref).ID
-	b.dirty = false // Add already set it; reset to isolate Move's effect
+	b.dirty = false // isolate Move's effect from Add's
 	if err := b.Move(id, StatusTodo, ref.Add(time.Hour)); err != nil {
 		t.Fatalf("Move returned %v, want nil", err)
 	}
@@ -355,5 +355,28 @@ func TestArchivedTasksNewestFirst(t *testing.T) {
 	}
 	if got[0].Title != "[Newer]" || got[1].Title != "[Older]" {
 		t.Errorf("order = [%s %s], want [[Newer] [Older]]", got[0].Title, got[1].Title)
+	}
+}
+
+func TestSetWorktreeTrimsClearsAndSkipsNoop(t *testing.T) {
+	b := &Board{}
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	id := b.Add("Task", "", nil, now).ID
+	if err := b.SetWorktree(id, "  ../wt  ", now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := b.TaskByID(id); got.Worktree != "../wt" || !got.UpdatedAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("worktree = %q updated = %v", got.Worktree, got.UpdatedAt)
+	}
+	b.SetWorktree(id, "../wt", now.Add(2*time.Hour))
+	if got, _ := b.TaskByID(id); !got.UpdatedAt.Equal(now.Add(time.Hour)) {
+		t.Error("unchanged worktree bumped UpdatedAt")
+	}
+	b.SetWorktree(id, "", now)
+	if got, _ := b.TaskByID(id); got.Worktree != "" {
+		t.Errorf("blank did not clear, got %q", got.Worktree)
+	}
+	if err := b.SetWorktree("missing", "x", now); err == nil {
+		t.Error("unknown ID accepted")
 	}
 }

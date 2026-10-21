@@ -111,8 +111,7 @@ func TestLoadRejectsMalformedHierarchy(t *testing.T) {
 	}
 }
 
-// Every mutation must survive Save + reload, on both column layouts: what
-// the board holds in memory is what the file must hold afterwards.
+// Every mutation must survive Save + reload, on both column layouts.
 func TestSavePersistsNewTaskWithAllFields(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	b, err := Load(p)
@@ -347,8 +346,7 @@ func TestLoadCorruptFileErrors(t *testing.T) {
 	}
 }
 
-// Two sessions saving in turn must keep both sides' cards: the agent
-// logging while the TUI is open is the reason Save merges.
+// Two sessions saving in turn keep both sides' cards.
 func TestSaveMergesConcurrentAdds(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	tui, err := Load(p)
@@ -548,8 +546,7 @@ func TestSaveRejectsConcurrentCompletionAndSubtaskCreation(t *testing.T) {
 	}
 }
 
-// A delete must stay deleted: Save merges concurrent adds from disk, but a
-// task removed this session is a tombstone, never merged back.
+// A task deleted this session is not merged back from disk.
 func TestSaveDoesNotResurrectDeletes(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	b, err := Load(p)
@@ -584,8 +581,7 @@ func TestSaveDoesNotResurrectDeletes(t *testing.T) {
 	}
 }
 
-// Deletes hold while concurrent adds still merge: the tombstone only skips
-// the removed ID, everything else on disk is appended as before.
+// Deletes hold while concurrent adds still merge.
 func TestSaveMergesAddsAroundDeletes(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	b, err := Load(p)
@@ -630,8 +626,7 @@ func TestSaveMergesAddsAroundDeletes(t *testing.T) {
 	_ = keep
 }
 
-// On the same task the later save wins whole: merging is per task, not
-// per field, so concurrent edits of one card resolve last-writer-wins.
+// Merging is per task, not per field: the later save of a card wins whole.
 func TestSaveSessionEditsWinOverDisk(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	first, err := Load(p)
@@ -671,8 +666,7 @@ func TestSaveSessionEditsWinOverDisk(t *testing.T) {
 	}
 }
 
-// A clean board with nothing new on disk writes nothing: read-only
-// sessions stay read-only even with the merge step in Save.
+// A clean board with nothing new on disk writes nothing.
 func TestSaveCleanBoardWritesNothing(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "board.json")
 	b, err := Load(p)

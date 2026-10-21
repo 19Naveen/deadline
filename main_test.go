@@ -12,7 +12,7 @@ import (
 	"gotodo/internal/task"
 )
 
-// testRef pins headless timestamps the way fixedClock pins the TUI's.
+// testRef pins headless timestamps.
 var testRef = time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 
 func TestVersionPrintsBuildRevision(t *testing.T) {
@@ -26,9 +26,7 @@ func TestVersionPrintsBuildRevision(t *testing.T) {
 	}
 }
 
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns
-// what it printed. The installer relies on `gotodo version` printing the
-// bare revision, so this pins the exact bytes.
+// captureStdout returns what fn wrote to os.Stdout.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -357,8 +355,7 @@ func TestAddValidationErrorsWriteNothing(t *testing.T) {
 		{"add", "[Bad col]", "-status", "qa"},            // unknown column
 		{"add", "[Extra]", "trailing"},                   // stray positional
 	}
-	// Note: bare `add` prints usage and exits zero by design (see
-	// TestHelpExitsZero), so it is not an error case.
+	// Bare `add` prints usage and exits zero, so it is not listed here.
 	for _, argv := range bad {
 		if err := run(argv); err == nil {
 			t.Errorf("run(%q) = nil, want an error", argv)
@@ -506,7 +503,7 @@ func TestDeleteHeadless(t *testing.T) {
 	if len(re.Tasks) != 1 || re.Tasks[0].ID != keep {
 		t.Fatalf("tasks = %+v, want only the kept card", re.Tasks)
 	}
-	// Deleting it again fails: the id is gone.
+	// Deleting it again fails.
 	if err := run([]string{"delete", drop[:8]}); err == nil {
 		t.Error("delete(gone id) = nil, want an error")
 	}
@@ -531,8 +528,7 @@ func TestDeleteHeadlessRejectsAmbiguousAndArchived(t *testing.T) {
 	if err := b.Move(old.ID, task.StatusDone, testRef); err != nil {
 		t.Fatal(err)
 	}
-	// Pin IDs so the prefixes below are deterministic (Add alone sets
-	// dirty, so the hand-set IDs still get saved).
+	// Pin IDs so the prefixes below are deterministic.
 	b.Tasks[0].ID, b.Tasks[1].ID, b.Tasks[2].ID = "abc123", "abc456", "def789"
 	b.Tasks[2].Archived = true
 	if err := b.Save(); err != nil {
@@ -693,8 +689,7 @@ func TestListSweepStaysInMemory(t *testing.T) {
 	if err := b.Save(); err != nil {
 		t.Fatal(err)
 	}
-	// list hides the swept task but never writes: the file still holds it
-	// unarchived for the next real session.
+	// list hides the swept task but never writes it back.
 	if err := run([]string{"list"}); err != nil {
 		t.Fatalf("list = %v, want nil", err)
 	}
@@ -767,8 +762,7 @@ func TestSecondLockerFailsAfterTimeout(t *testing.T) {
 	}
 }
 
-// chdir moves the test into dir and restores the working directory when
-// the test finishes. (t.Chdir needs Go 1.24; the module targets 1.22.)
+// chdir moves the test into dir until it finishes (t.Chdir needs Go 1.24).
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	prev, err := os.Getwd()
@@ -783,4 +777,36 @@ func chdir(t *testing.T, dir string) {
 			t.Error(err)
 		}
 	})
+}
+
+// -worktree is set by add, printed by show and list, and cleared by edit.
+func TestWorktreeFlagAddShowEdit(t *testing.T) {
+	chdir(t, t.TempDir())
+	if err := run([]string{"init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"add", "Parser", "-worktree", "../wt-parser"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := resolveBoardPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := b.Tasks[0].ID[:8]
+	if out := captureStdout(t, func() { run([]string{"show", id}) }); !strings.Contains(out, "worktree: ../wt-parser") {
+		t.Errorf("show = %q", out)
+	}
+	if out := captureStdout(t, func() { run([]string{"list"}) }); !strings.Contains(out, "worktree ../wt-parser") {
+		t.Errorf("list = %q", out)
+	}
+	if err := run([]string{"edit", id, "-worktree", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ = task.Load(path); b.Tasks[0].Worktree != "" {
+		t.Errorf("edit -worktree \"\" left %q", b.Tasks[0].Worktree)
+	}
 }
