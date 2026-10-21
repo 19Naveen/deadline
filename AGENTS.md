@@ -1,6 +1,6 @@
 # deadline (gotodo)
 
-Keyboard-driven terminal kanban board. Go 1.22+, three deps (`bubbles`, `bubbletea`, `lipgloss`).
+Keyboard-driven terminal kanban board with Board, Analytics, Archive and Calendar tabs. Personal boards have four columns; project boards use a five-stage development pipeline. Go 1.22+, three deps (`bubbles`, `bubbletea`, `lipgloss`).
 
 ```sh
 go test ./...   # full suite

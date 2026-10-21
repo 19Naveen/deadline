@@ -305,7 +305,7 @@ go vet ./...
 gofmt -l .
 ```
 
-Three packages. `internal/task` is the model and the JSON store, `internal/stats` is pure analytics, `internal/ui` is the three Bubble Tea pages. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic.
+Three packages. `internal/task` is the model and the JSON store, `internal/stats` is pure analytics, and `internal/ui` contains the four Bubble Tea tabs: Board, Analytics, Archive and Calendar. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic.
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more.
 
