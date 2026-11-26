@@ -393,7 +393,7 @@ func (s *Server) runTool(tool *Tool, args json.RawMessage) (text string, err err
 	if err != nil {
 		return "", err
 	}
-	if !tool.ReadOnly {
+	if !tool.ReadOnly && !tool.SavesItself {
 		if err := call.Board.Save(); err != nil {
 			return "", fmt.Errorf("save board: %w", err)
 		}

@@ -130,5 +130,7 @@ func Sync(ctx context.Context, b *task.Board, r Runner, now time.Time) []Action 
 			}
 		}
 	}
+	// Shipped or blocked cards change dependants and claims.
+	b.Reconcile(now)
 	return actions
 }

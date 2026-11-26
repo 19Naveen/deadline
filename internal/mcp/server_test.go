@@ -281,13 +281,17 @@ func TestToolsListHasSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"board":       nil,
-		"list_tasks":  nil,
-		"show_task":   {"id"},
-		"add_task":    {"title"},
-		"move_task":   {"id", "status"},
-		"edit_task":   {"id"},
-		"delete_task": {"id"},
+		"board":        nil,
+		"list_tasks":   nil,
+		"show_task":    {"id"},
+		"add_task":     {"title"},
+		"move_task":    {"id", "status"},
+		"edit_task":    {"id"},
+		"delete_task":  {"id"},
+		"next_task":    nil,
+		"claim_task":   {"id"},
+		"release_task": {"id"},
+		"task_context": {"id"},
 	}
 	got := map[string]bool{}
 	for _, tool := range res.Tools {

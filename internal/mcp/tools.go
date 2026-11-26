@@ -26,6 +26,9 @@ type Tool struct {
 	ReadOnly    bool
 	Destructive bool
 	Idempotent  bool
+	// SavesItself tools write the board under the lock themselves (claims
+	// need check-then-set), so the generic Save after the handler is skipped.
+	SavesItself bool
 	// Handler does the work and returns human-readable text. A returned
 	// error is shown to the model as an isError result and nothing is saved.
 	Handler func(c *Call) (string, error)
@@ -40,6 +43,8 @@ type Call struct {
 	Now time.Time
 	// Args is the raw arguments object ({} when the client sent none).
 	Args json.RawMessage
+	// Path is the board file, for tools that write under the lock.
+	Path string
 }
 
 func (s *Server) newCall(args json.RawMessage) (*Call, error) {
@@ -50,7 +55,7 @@ func (s *Server) newCall(args json.RawMessage) (*Call, error) {
 	b.Actor = s.Actor()
 	now := s.now()
 	b.SweepArchive(now)
-	return &Call{Board: b, Now: now, Args: args}, nil
+	return &Call{Board: b, Now: now, Args: args, Path: s.path}, nil
 }
 
 // Decode strictly unmarshals the arguments into v: unknown fields and wrong
@@ -76,7 +81,7 @@ func (c *Call) Status(name string) (task.Status, error) {
 
 // DefaultTools is the tool table served by tools/list, in display order.
 func DefaultTools() []Tool {
-	return []Tool{
+	return append([]Tool{
 		{
 			Name:  "board",
 			Title: "Board columns",
@@ -129,6 +134,10 @@ func DefaultTools() []Tool {
 				"worktree":      stringProp("Optional git worktree path or branch where the work lives."),
 				"attachments":   stringArrayProp("Optional reference file paths (specs, designs, logs). Paths are stored, files are not copied."),
 				"working_notes": stringArrayProp("Optional paths of agent working documents (plans, scratch notes) for this task."),
+				"priority":      priorityProp("Optional priority."),
+				"labels":        stringArrayProp("Optional labels, e.g. [\"backend\", \"bug\"]."),
+				"blocked_by":    stringArrayProp("Optional IDs or prefixes of tasks that must ship first; the task auto-blocks until they do."),
+				"pr":            stringProp("Optional pull request URL or number."),
 			}, "title"),
 			Handler: toolAddTask,
 		},
@@ -161,6 +170,10 @@ func DefaultTools() []Tool {
 				"worktree":      stringProp("Replacement git worktree path or branch; empty clears it."),
 				"attachments":   stringArrayProp("Replacement list of reference file paths; [] clears them."),
 				"working_notes": stringArrayProp("Replacement list of working document paths; [] clears them."),
+				"priority":      priorityProp("Replacement priority; \"none\" clears it."),
+				"labels":        stringArrayProp("Replacement labels; [] clears them."),
+				"blocked_by":    stringArrayProp("Replacement blocker IDs or prefixes; [] clears them."),
+				"pr":            stringProp("Replacement pull request URL or number; empty clears it."),
 			}, "id"),
 			Idempotent: true,
 			Handler:    toolEditTask,
@@ -176,7 +189,7 @@ func DefaultTools() []Tool {
 			Destructive: true,
 			Handler:     toolDeleteTask,
 		},
-	}
+	}, agentTools()...)
 }
 
 // Schema helpers. Properties are plain maps so json.Marshal sorts them.
@@ -419,6 +432,10 @@ type addArgs struct {
 	Worktree     string   `json:"worktree"`
 	Attachments  []string `json:"attachments"`
 	WorkingNotes []string `json:"working_notes"`
+	Priority     string   `json:"priority"`
+	Labels       []string `json:"labels"`
+	BlockedBy    []string `json:"blocked_by"`
+	PR           string   `json:"pr"`
 }
 
 func toolAddTask(c *Call) (string, error) {
@@ -460,12 +477,16 @@ func toolAddTask(c *Call) (string, error) {
 	if err := b.SetDocuments(id, a.Attachments, a.WorkingNotes, c.Now); err != nil {
 		return "", err
 	}
+	if err := c.applyMeta(id, &a.Priority, &a.Labels, &a.BlockedBy, &a.PR); err != nil {
+		return "", err
+	}
 	if status != b.Statuses()[0] {
 		if err := b.Move(id, status, c.Now); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("added %s [%s] %s", shortID(id), status, addedTitle), nil
+	moved := b.Reconcile(c.Now)
+	return fmt.Sprintf("added %s [%s] %s", shortID(id), status, addedTitle) + c.syncedLines(moved), nil
 }
 
 type moveArgs struct {
@@ -495,7 +516,12 @@ func toolMoveTask(c *Call) (string, error) {
 	if err := c.Board.Move(t.ID, to, c.Now); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("moved %s %s: %s → %s", shortID(t.ID), t.Title, t.Status, to), nil
+	moved := c.Board.Reconcile(c.Now)
+	out := fmt.Sprintf("moved %s %s: %s → %s", shortID(t.ID), t.Title, t.Status, to)
+	if count, limit, over := c.Board.OverWIP(to); over {
+		out += fmt.Sprintf("\n! %s over WIP limit (%d/%d)", to, count, limit)
+	}
+	return out + c.syncedLines(moved), nil
 }
 
 // editArgs uses pointers so an omitted field keeps its value while an
@@ -509,6 +535,10 @@ type editArgs struct {
 	Worktree     *string   `json:"worktree"`
 	Attachments  *[]string `json:"attachments"`
 	WorkingNotes *[]string `json:"working_notes"`
+	Priority     *string   `json:"priority"`
+	Labels       *[]string `json:"labels"`
+	BlockedBy    *[]string `json:"blocked_by"`
+	PR           *string   `json:"pr"`
 }
 
 func toolEditTask(c *Call) (string, error) {
@@ -517,8 +547,9 @@ func toolEditTask(c *Call) (string, error) {
 		return "", err
 	}
 	if a.Title == nil && a.Description == nil && a.Deadline == nil && a.Parent == nil &&
-		a.Worktree == nil && a.Attachments == nil && a.WorkingNotes == nil {
-		return "", errors.New("nothing to edit: pass at least one of title, description, deadline, parent, worktree, attachments, working_notes")
+		a.Worktree == nil && a.Attachments == nil && a.WorkingNotes == nil &&
+		a.Priority == nil && a.Labels == nil && a.BlockedBy == nil && a.PR == nil {
+		return "", errors.New("nothing to edit: pass at least one of title, description, deadline, parent, worktree, attachments, working_notes, priority, labels, blocked_by, pr")
 	}
 	b := c.Board
 	t, err := c.Resolve(a.ID)
@@ -567,7 +598,12 @@ func toolEditTask(c *Call) (string, error) {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("edited %s [%s] %s", shortID(t.ID), t.Status, strings.TrimSpace(title)), nil
+	if err := c.applyMeta(t.ID, a.Priority, a.Labels, a.BlockedBy, a.PR); err != nil {
+		return "", err
+	}
+	moved := b.Reconcile(c.Now)
+	edited, _ := b.TaskByID(t.ID)
+	return fmt.Sprintf("edited %s [%s] %s", shortID(t.ID), edited.Status, strings.TrimSpace(title)) + c.syncedLines(moved), nil
 }
 
 func toolDeleteTask(c *Call) (string, error) {
