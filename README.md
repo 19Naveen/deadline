@@ -19,11 +19,11 @@ A terminal kanban board that never lets you forget when something is due.
 Four columns. Two-line cards. A countdown on each card that gets louder as the day closes in.
 
 ```
-  Board    Analytics    Archive    Calendar
+  Board    Analytics    Archive    Calendar    Agents
 ╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮
 │ TODO (3)             ││ DOING (1)            ││ BLOCKED (1)          ││ DONE (1)             │
 │                      ││                      ││                      ││                      │
-│ ▌ Ship the Q3 re… 6d ││   Rewrite the pa… 2d ││   Waiting on de… 12d ││   Drop the old API   │
+│ ▌ !!! Ship the Q… 6d ││   Rewri… ◆ claude 2d ││   Waiting on de… 12d ││   Drop the old API   │
 │ ▌ Draft, review, se… ││   Split the lexer o… ││   Mocks not landed   ││                      │
 │                      ││                      ││                      ││                      │
 │   Renew the TLS … 1d ││                      ││                      ││                      │
@@ -36,9 +36,15 @@ Four columns. Two-line cards. A countdown on each card that gets louder as the d
 │                      ││                      ││                      ││                      │
 ╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯╰──────────────────────╯
 
-hjkl Move  enter Open  a Add  s Subtask  e Edit  d Delete  m Grab  f Family  ctrl+t Focus
+enter Open  a Add  e Edit  d Delete  u Undo  / Search  m Grab  f Family  ctrl+t Focus
 tab Switch  ? Help  q Quit
 ```
+
+A card can carry a priority marker before its title (`!!!` high in red, `!!`
+medium in amber, `!` low, muted) and, next to the countdown, `◆ claude` while
+an agent holds a claim on it. In a narrow column the claim shortens to `◆ cl…`
+and then a bare `◆`; cards never get taller. A column with a WIP limit shows it
+in the header: `IN DEV (4/3)`, with the count in red once it is over.
 
 No mouse. No config file. No account.
 
@@ -141,6 +147,15 @@ Done tasks are left off: a deadline you already met is history, and this page is
 
 ---
 
+## Agents tab
+
+Fifth page. Who is working on the board, read-only, refreshed whenever the board reloads (about every 2 seconds).
+
+- **Agents** — every agent named in move history, a claim, or as a card's last agent. Each row shows the cards it has claimed or in progress (up to 3, then `+N more`), its last activity (`last 2h ago`) and its moves over the last 7 days.
+- **Activity** — the 20 most recent moves across all tasks, newest first: time (`30/07 11:00`), agent (or `you`), short ID, title and `from → to`.
+
+---
+
 ## Install
 
 Needs Go 1.22 or newer, and a terminal at least 80 columns wide.
@@ -189,27 +204,64 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 
 | Key | What it does |
 |---|---|
-| `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `esc` close |
+| `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `o` open a document, `y` approve, `esc` close |
 | `a` | add a task |
 | `s` | add a subtask under the selected task's family |
 | `f` | focus the board on the selected parent and its subtasks; press again to clear |
 | `e` | edit the selected task |
 | `d` | delete it, after a `y`/`n` confirm popup that names the task |
 | `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
+| `/` | search; cards filter as you type, `enter` keeps the filter, `esc` clears it |
+| `u` | undo the last move, edit, delete, add or approval (up to 20 steps) |
+| `A` | turn the approval gate on or off |
 | `h` `l` | previous / next column |
 | `j` `k` | previous / next task |
 | `g` `G` | first / last task in the column |
 | `ctrl+t` | switch between moving the cursor and moving between whole columns |
-| `tab` | cycle Board, Analytics, Archive, Calendar |
+| `tab` | cycle Board, Analytics, Archive, Calendar, Agents |
 | `h` `l` `t` | on the Calendar page: previous month, next month, back to today |
 | `?` | key list |
 | `q` | quit |
 
 `enter` on a card opens it centred on the screen: the full title, its
-parent, deadline, worktree and ID, then the subtask checklist and the
-description, attachments and working notes. The body reserves at least ten rows
-when space permits; long bodies scroll with `j`/`k`. It is
-read-only, but `s`, `e` and `d` work from there.
+parent, deadline, worktree and ID, then whichever of priority, labels,
+blocked by (up to three, then `+N more`), claim (`until 30/07/2026 15:30`, or
+`expired`), PR, last agent and `awaiting approval` are set, then the subtask
+checklist and the description, attachments and working notes. The body
+reserves at least ten rows when space permits; long bodies scroll with
+`j`/`k`. It is read-only, but `s`, `e` and `d` work from there.
+
+**Search.** Terms are separated by spaces, a card must match all of them, and
+case is ignored:
+
+| Term | Matches |
+|---|---|
+| `login` | title, description or a label containing it, or an ID starting with it |
+| `#api` | a label starting with `api` |
+| `@claude` | the agent holding the claim or that made the last move, by name prefix |
+
+Search stacks with the family filter (`f`); column counts then read
+`shown/total`, and the WIP header `(1 · 4/3)`.
+
+**Opening documents.** `o` in the popup opens an attachment or working note
+straight away, or a chooser when there is more than one. Relative paths start
+at the project root (the folder holding `.deadline/`), or the current directory
+for a board outside a project. Text files (`.md`, `.txt`, source, config, no
+extension) open in `$VISUAL`, then `$EDITOR`, then `vi`, and the board waits
+for the editor to exit. Everything else goes to `open` (macOS), `wslview` (WSL)
+or `xdg-open`. A missing file says `! not found: <path>` in the footer.
+
+**Undo.** Up to 20 snapshots, in memory, for this session only. A move or edit
+returns the task to its earlier state, history entries included; a delete
+brings the task back with its subtasks re-attached; an add deletes the new
+task. The footer confirms with `undone: <what>`.
+
+**Approval.** With the gate on (`A`), agents cannot move cards into the
+terminal column, so finished work waits in review (testing-review on project
+boards, doing on personal ones) with `awaiting approval` in its popup. `y`
+ships it as you, a human, even if `GOTODO_AGENT` is set in that terminal.
+Dropping or approving a card re-checks dependencies at once, the same as
+`gotodo move` (see below).
 
 Adding and editing open the same form, centred in the same place. `tab` and
 `shift+tab` move between Title, Description, Deadline, Worktree, Parent,
@@ -258,6 +310,10 @@ gotodo -file ./work.json
 
 Every change writes through a temporary file and a rename, so an interrupted write cannot leave you with half a board. A session where you changed nothing does not write at all. Concurrent writers merge by task under a brief file lock, so an agent logging while your board is open never drops your cards — and vice versa; two sessions editing the same card resolve last-writer-wins.
 
+Everything lives in the board file, with one exception: `gotodo notify` keeps
+its "already told you" record in `<user cache dir>/gotodo/notify-<hash of board path>.json`.
+Delete that file to reset it.
+
 ---
 
 ## Project boards
@@ -277,6 +333,70 @@ Separate files are separate boards, which is the easiest way to keep work and pe
 
 ---
 
+## Priority, labels and dependencies
+
+```bash
+gotodo add "Fix login crash" -priority high
+gotodo add "Parser tests" -label backend -label tests
+gotodo add "Wire API" -blocked-by 3fa1c9e2 -blocked-by 7b20d4aa
+gotodo edit 9c1e0f33 -priority none -label "" -blocked-by ""   # clear all three
+gotodo list -status indev -label ui -priority medium
+```
+
+| Field | Notes |
+|---|---|
+| Priority | `none` (default), `low`, `medium`, `high`; also `l`/`m`/`h`, `med`, `p0`–`p3`, any case. `list` sorts each column highest first. |
+| Labels | Repeat `-label`. Trimmed, lowercased, a leading `#` dropped, duplicates removed — `#Bug` is `bug`. |
+| Blocked by | Repeat `-blocked-by` with ID prefixes. A card cannot block itself, blockers must exist, and a cycle is refused without writing: `gotodo: dependency cycle: 3fa1c9e2 → 9c1e0f33 → 3fa1c9e2`. |
+
+On `edit`, each of these flags replaces the whole list and `""` clears it.
+
+A blocker stays open until it reaches the last column (`done` or `shipped`).
+On boards with a `blocked` column, every change that can affect that — `add`,
+`edit`, `move`, a drop or approval in the TUI, `pr sync`, the MCP tools — re-checks
+dependencies before saving and prints a line for each card it moves:
+
+```
+auto-blocked 9c1e0f33 Wire API (waiting on 3fa1c9e2)
+unblocked 9c1e0f33 Wire API → indev
+```
+
+A todo or active card with an open blocker moves to `blocked`; once its last
+blocker ships (in the same command) or its blockers are cleared, it goes back
+to the column it came from. Only cards the rule itself blocked are moved back —
+a card you blocked by hand stays put. Later columns and archived cards are left
+alone. Automatic moves are recorded as `gotodo:deps`, and the card's "last
+agent" keeps naming the last real actor. The same re-check drops claims on
+cards that just finished.
+
+### WIP limits
+
+```bash
+gotodo wip               # each column: count and limit
+gotodo wip indev 3       # cap indev at 3 cards
+gotodo wip indev 0       # remove the cap
+```
+
+```
+todo: 4 (no limit)
+indev: 4/3 over limit
+testing-review: 1/2
+```
+
+A limit is a warning, not a wall: moving into a full column still works, `move`
+says so, and `gotodo list` opens with `! indev over WIP limit (4/3)` for each column over
+its cap.
+
+`list` and `show` print the new fields when set:
+
+```
+3fa1c9e2 [indev] Wire API · P:high · #backend #api · blocked by 7b20d4aa · claimed by claude · PR #42 · last claude
+```
+
+`list` names only open blockers; `show` lists every blocker with its status.
+
+---
+
 ## Agents
 
 Coding agents can't drive the interactive board, so `gotodo` has headless commands with plain-text output. They run against the project board when invoked in the project directory:
@@ -284,8 +404,8 @@ Coding agents can't drive the interactive board, so `gotodo` has headless comman
 ```bash
 gotodo init                                    # once per project (skip if .deadline/ exists)
 gotodo board                                   # board type + accepted columns
-gotodo add "Rewrite the parser" -desc "Split the lexer" -deadline 04/08/2026
-gotodo add "Write parser tests" -parent 3fa1c9e2
+gotodo add "Rewrite the parser" -desc "Split the lexer" -deadline 04/08/2026 -priority high
+gotodo add "Write parser tests" -parent 3fa1c9e2 -label tests -blocked-by 7b20d4aa
 gotodo list
 gotodo list -status blocked
 gotodo list -parent 3fa1c9e2
@@ -295,6 +415,19 @@ gotodo edit 3fa1c9e2 -parent 91bc2f0a         # attach; -parent "" detaches
 gotodo edit 3fa1c9e2 -worktree ../app-parser   # where the work lives; "" clears
 gotodo edit 3fa1c9e2 -attachment "brief.docx" -working-note docs/task.md
 gotodo delete 3fa1c9e2                       # no confirm; list first, there is no undo
+
+gotodo next -claim -start                    # pick, claim and start the next task
+gotodo claim 3fa1c9e2 -ttl 30m               # hold a specific card
+gotodo release 3fa1c9e2                      # let it go
+gotodo context 3fa1c9e2                      # everything needed to resume, as markdown
+gotodo wip indev 3                           # cap a column
+gotodo approval on                           # agents can no longer ship (humans only)
+gotodo pr 3fa1c9e2 42                        # link a pull request
+gotodo pr sync                               # ship merged PRs, block failing CI (needs gh)
+gotodo standup -format markdown              # what happened in the last 24 hours
+gotodo mcp                                   # serve the board over MCP (stdio)
+gotodo serve                                 # read-only web board on 127.0.0.1:7777
+gotodo notify -watch                         # desktop alerts for blocked, review, due
 ```
 
 Repeat `-attachment` or `-working-note` to specify multiple paths. On `edit`,
@@ -304,6 +437,250 @@ empty value to clear it. `gotodo show` displays the recorded paths.
 The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). A bare `gotodo -h`, or `init`, `add` or `list` with `-h`, prints help without changing anything.
 
 The installer drops a `gotodo-task-board` skill (`skills/gotodo-task-board/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories. Its task-management and kanban keywords make it easy for agents to discover for any coding workflow. An open board picks up agent writes within a couple of seconds — no restart needed.
+
+### Who is moving cards
+
+```bash
+export GOTODO_AGENT=claude      # or codex, gemini, claude-2, ...
+```
+
+With `GOTODO_AGENT` set, every move is recorded under that name — in the task
+history, the card's "last agent", `context` and the Agents tab. Without it the
+CLI acts as a human, as the TUI always does.
+
+### Picking up work: `next`
+
+```bash
+gotodo next                       # peek: which task should be worked next?
+gotodo next -claim                # ...and claim it for $GOTODO_AGENT
+gotodo next -claim -start         # ...and move it to the active column
+gotodo next -start -ttl 4h        # longer claim (default 2h)
+```
+
+`next` prints the task like `show` does, or `no available tasks`. It picks from
+the first column and skips archived cards, cards another agent holds a live
+claim on, parents with open subtasks (work those instead), and cards with an
+open blocker (a subtask inherits its parent's). What is left is ordered by
+priority, then earliest deadline (none last), then oldest.
+
+`-start` moves the card to the active column (`doing` or `indev`); an agent
+running it always claims too, a human just moves it. `-claim` without
+`GOTODO_AGENT` is an error. Pick, claim and start happen as one transaction
+under the board lock, so two agents running `next -claim` at the same moment
+get different cards.
+
+### Claims
+
+```bash
+gotodo claim 3fa1c9e2             # claim for $GOTODO_AGENT for 2h
+gotodo claim 3fa1c9e2 -ttl 30m    # re-claiming your own card extends it
+gotodo release 3fa1c9e2           # drop the claim when you stop
+```
+
+- A claim lasts until its TTL runs out; after that anyone may take the card.
+- Claiming a card another agent holds fails: `task is claimed by claude until 27/11/2026 09:30`.
+- Claims gate other agents' `claim` and `next`, never `move`: anyone can always move a card.
+- An agent can release its own claim or an expired one; a human can release anyone's.
+- A card reaching `done`/`shipped` loses its claim in the same command. Release explicitly when you stop early.
+
+### Resuming work: `context`
+
+`gotodo context <id>` prints one markdown document: title, status, priority,
+labels, deadline, worktree, PR, claim (or `(expired)`), last agent, parent,
+subtasks and blockers with their statuses, attachment paths, description and
+the last 10 transitions with who made them and when (DD/MM/YYYY HH:MM).
+
+Working notes under 64 KB are inlined in a fenced block. Relative paths resolve
+against the project root first, then the current directory, so it works from
+any subdirectory. Missing, oversized, binary or directory notes are listed with
+the reason; attachment contents are never printed. `context` is read-only.
+
+### Approval gate
+
+```bash
+gotodo approval status            # on or off
+gotodo approval on                # agents can no longer move cards to done/shipped
+gotodo approval off
+```
+
+With approval on, an agent's move into the terminal column is refused; a human
+ships it from the TUI (`y`) or a plain CLI. `approval on` and `off` are refused
+when `GOTODO_AGENT` is set, so an agent cannot lift the gate that reviews it.
+`approval status` works for everyone.
+
+### MCP server
+
+`gotodo mcp` serves the board over the [Model Context Protocol](https://modelcontextprotocol.io),
+so agents call typed tools instead of building shell commands. It speaks stdio
+(newline-delimited JSON-RPC 2.0) and uses only the standard library.
+
+```bash
+gotodo mcp                                     # nearest project board, else the personal board
+gotodo -file path/to/.deadline/board.json mcp  # pin one board (-file goes before mcp)
+```
+
+- **Board resolution** follows the CLI: nearest `.deadline/board.json` from the
+  directory the client starts it in, else the personal board. Pin with `-file`
+  if your client starts servers elsewhere.
+- **Always fresh.** Each call reloads the board from disk and saves with the
+  same locking merge as the CLI, so the TUI, CLI and other agents can work
+  alongside it. Changes go through the same dependency and claim re-check.
+- **Attribution.** Moves are recorded under `GOTODO_AGENT`, else the client's
+  name in lowercase (`claude-code`, `opencode`, `codex-mcp-client`), else
+  `mcp`. An MCP session is never the human, so the approval gate applies.
+- Stdout carries only protocol messages; diagnostics go to stderr. Protocol
+  versions `2025-06-18`, `2025-03-26` and `2024-11-05` are accepted.
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `board` | none | Board type, columns, WIP limits, approval gate, and the name moves are recorded under |
+| `list_tasks` | `status?`, `parent?` | One line per active task, like `gotodo list` |
+| `show_task` | `id` | The full card, like `gotodo show` |
+| `add_task` | `title`, `description?`, `deadline?` (DD/MM/YYYY), `status?`, `parent?`, `worktree?`, `attachments?[]`, `working_notes?[]`, `priority?`, `labels?[]`, `blocked_by?[]`, `pr?` | Creates a card and returns its short ID |
+| `move_task` | `id`, `status` | Moves a card and records the transition |
+| `edit_task` | `id` plus any field `add_task` takes except `status` | Changes only what you pass; `""` clears a text field, arrays replace the whole list and `[]` clears it |
+| `delete_task` | `id` | Deletes a card for good and detaches its subtasks |
+| `next_task` | `claim?`, `start?`, `ttl_minutes?` | Like `gotodo next` |
+| `claim_task` | `id`, `ttl_minutes?` | Like `gotodo claim` |
+| `release_task` | `id` | Like `gotodo release` |
+| `task_context` | `id` | Like `gotodo context` |
+
+IDs accept any unique prefix. Failures (unknown status, ambiguous ID, bad date,
+the approval gate) come back as tool results with `isError: true` and a
+readable message, so the model can fix the call.
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope project gotodo -e GOTODO_AGENT=claude -- gotodo mcp
+```
+
+Or in `.mcp.json` (also read by Claude Desktop, Cursor and other `mcpServers` clients):
+
+```json
+{
+  "mcpServers": {
+    "gotodo": { "command": "gotodo", "args": ["mcp"], "env": { "GOTODO_AGENT": "claude" } }
+  }
+}
+```
+
+**Codex**, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.gotodo]
+command = "gotodo"
+args = ["mcp"]
+env = { GOTODO_AGENT = "codex" }
+```
+
+**OpenCode**, in `opencode.json` at the project root or `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "gotodo": {
+      "type": "local",
+      "command": ["gotodo", "mcp"],
+      "enabled": true,
+      "environment": { "GOTODO_AGENT": "opencode" }
+    }
+  }
+}
+```
+
+If `gotodo` is not on the client's `PATH`, give the full path to
+`~/.local/bin/gotodo`. To pin a board, put `-file` before `mcp`:
+`["-file", "/abs/project/.deadline/board.json", "mcp"]`.
+
+---
+
+## Reports and integrations
+
+All local. GitHub is reached only through your installed `gh` CLI, the web view
+binds only to loopback, and notifications go only to your desktop.
+
+### Standup
+
+```bash
+gotodo standup                      # last 24 hours, plain text
+gotodo standup -since 7d            # any Go duration (90m, 36h) or whole days
+gotodo standup -format markdown     # bold headings and `ids`, for chat
+```
+
+| Section | Lists |
+|---|---|
+| Done | cards that reached done/shipped in the window, and who moved them |
+| Moved | every other column change, `from → to`, by agent or "you" |
+| Blocked now | cards in `blocked` and how long they have sat there |
+| Due today/overdue | open cards due today or late, most overdue first |
+| In progress | cards in the working columns, with any live claim and PR |
+
+Empty sections are left out; if all are empty it says `Nothing to report`.
+Times are HH:MM for today and DD/MM/YYYY HH:MM before that. Read-only.
+
+### Pull requests
+
+```bash
+gotodo pr 3fa1c9e2 https://github.com/[org]/[repo]/pull/42   # link by URL
+gotodo pr 3fa1c9e2 42                                         # or by number ("#42" works too)
+gotodo pr 3fa1c9e2                                            # show the link
+gotodo pr 3fa1c9e2 ""                                         # clear it
+gotodo pr sync -dry-run                                       # what would change
+gotodo pr sync                                                # apply it
+```
+
+A PR is an `http(s)` URL or a number; numbers resolve against the repository
+holding `.deadline/`. `pr sync` runs `gh pr view` for every open card with a
+PR, then:
+
+- **Merged** moves the card to the terminal column — refused, with "awaits
+  human approval", when the gate is on and an agent is running the sync.
+- **A failing check** (`FAILURE`, `ERROR`, `CANCELLED`, `TIMED_OUT`,
+  `STARTUP_FAILURE`) on an unmerged PR moves the card to `blocked` and appends
+  `CI failing on PR <url> (DD/MM/YYYY)` to its description, once per PR.
+- Green or pending checks, and closed unmerged PRs, are left alone.
+
+Shipping a card here unblocks its dependants in the same run. One line per
+action, `would …` in dry-run. If `gh` is missing or not logged in it says so
+(`gh auth login`) and exits non-zero, as it does when any PR could not be
+checked. gotodo never reads or stores GitHub tokens.
+
+### Read-only web board
+
+```bash
+gotodo serve                         # http://127.0.0.1:7777/
+gotodo serve -addr 127.0.0.1:8080
+```
+
+The board in a browser, dark like the TUI: columns with WIP limits, cards with
+coloured countdowns, priority, labels, live claims and PR links.
+`GET /api/board` returns the same as JSON (`board`, `require_approval`,
+`generated_at`, `version`, `columns[]` with `cards[]`); the page polls it every
+5 seconds and reloads when `version` changes.
+
+- Binds only to loopback (`127.0.0.0/8`, `::1`, `localhost`); `0.0.0.0`, `:7777` and LAN addresses are refused.
+- GET and HEAD only. There are no write endpoints.
+- Non-loopback `Host` headers are refused (DNS rebinding).
+- Task text is escaped by `html/template`, with a per-request CSP nonce plus `nosniff`, `no-referrer` and `DENY` framing.
+
+Ctrl+C stops it.
+
+### Desktop notifications
+
+```bash
+gotodo notify                        # one pass
+gotodo notify -watch                 # check every minute until Ctrl+C
+gotodo notify -watch -interval 5m    # minimum 10s
+```
+
+Fires once per event when a card becomes blocked, enters review
+(`testing-review`, or `doing` on a personal board), is due today, or is
+overdue; a card blocked again later fires again. Uses `notify-send` on Linux
+and `osascript` on macOS, and prints to stdout on WSL or when neither exists.
+The first run looks back only 24 hours for blocked and review events. It never
+writes to the board (see Storage for where its record lives).
 
 ---
 
@@ -315,9 +692,9 @@ go vet ./...
 gofmt -l .
 ```
 
-Three packages. `internal/task` is the model and the JSON store, `internal/stats` is pure analytics, and `internal/ui` contains the four Bubble Tea tabs: Board, Analytics, Archive and Calendar. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic.
+`internal/task` is the model and the JSON store, `internal/stats` is pure analytics, and `internal/ui` contains the five Bubble Tea tabs: Board, Analytics, Archive, Calendar and Agents. Around them sit `internal/mcp` (the MCP server), `internal/gh` (the `gh` wrapper behind `pr sync`), `internal/report` (standup), `internal/web` (`serve`) and `internal/notify`. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic. Tests never call the real `gh` or send real notifications.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more.
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more — the MCP server and web view are standard library.
 
 ---
 
