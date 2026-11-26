@@ -13,6 +13,9 @@
 #      in ~/.bashrc and ~/.zshrc (idempotent — never appends twice)
 #   5. Installs the `deadline` agent skill for Claude Code, Codex, OpenCode
 #      and other Agent-Skills-compatible tools
+#   6. Runs `gotodo setup`: an interactive wizard when a terminal is
+#      available (MCP server, optional skill packs and stage loops),
+#      otherwise the non-interactive MCP registration only
 set -euo pipefail
 
 : "${HOME:?HOME must be set}"
@@ -27,6 +30,10 @@ INSTALL_DIR="${HOME}/.local/bin"
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=22
 UNINSTALL=0
+# Passed through to `gotodo setup`: SETUP_YES skips the wizard,
+# SETUP_LOOPS is "", -loops or -no-loops.
+SETUP_YES=0
+SETUP_LOOPS=""
 
 # --- pretty output ------------------------------------------------------
 if [ -t 1 ]; then
@@ -71,6 +78,12 @@ while [ $# -gt 0 ]; do
       BRANCH="${2:?--branch needs a branch}"; shift 2 ;;
     --uninstall)
       UNINSTALL=1; shift ;;
+    --yes)
+      SETUP_YES=1; shift ;;
+    --loops)
+      SETUP_LOOPS="-loops"; shift ;;
+    --no-loops)
+      SETUP_LOOPS="-no-loops"; shift ;;
     -h|--help)
       cat <<'EOF'
 deadline (gotodo) installer — one script for all Linux distros.
@@ -82,8 +95,14 @@ Options:
   --dir PATH      install directory (default ~/.local/bin)
   --repo O/N      GitHub repo (default 19Naveen/deadline)
   --branch NAME   git branch (default main)
+  --yes           no setup wizard: register the MCP server with every agent
+  --loops         set up stage loops (wizard skips the question; with --yes,
+                  writes default loops if ~/.config/gotodo/loops.json is absent)
+  --no-loops      skip stage loops
   --uninstall     remove the binary, skills and PATH lines (boards kept)
   -h, --help      show this help
+After building, the installer runs `gotodo setup`: a wizard when a terminal
+is available, else `gotodo setup -yes -no-loops` (MCP registration only).
 Env overrides: DEADLINE_REPO, DEADLINE_BRANCH
 EOF
       exit 0 ;; 
@@ -412,6 +431,27 @@ install_skill() {
   done
 }
 
+# have_tty reports whether the wizard can talk to a person. The script is
+# usually piped into bash, so stdin is the pipe: the wizard reads /dev/tty.
+have_tty() {
+  [ -t 1 ] && [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null
+}
+
+# run_setup registers the MCP server with Claude Code, Codex and OpenCode,
+# through the wizard when interactive. Safe to repeat.
+run_setup() {
+  local bin="$INSTALL_DIR/$BINARY"
+  if [ "$SETUP_YES" -eq 0 ] && have_tty; then
+    info "Starting the gotodo setup wizard…"
+    "$bin" setup ${SETUP_LOOPS:+"$SETUP_LOOPS"} </dev/tty >/dev/tty \
+      || warn "Setup did not finish; run 'gotodo setup' later."
+  else
+    info "Registering the gotodo MCP server with installed agents…"
+    "$bin" setup -yes "${SETUP_LOOPS:--no-loops}" \
+      || warn "MCP setup did not finish for every agent; run 'gotodo setup' later."
+  fi
+}
+
 # --- main ---------------------------------------------------------------
 if [ "$UNINSTALL" -eq 1 ]; then
   uninstall_gotodo
@@ -451,10 +491,7 @@ else
 fi
 install_skill "$workdir/src"
 install_global_instructions "$workdir/src"
-# Register the MCP server with Claude Code, Codex and OpenCode so agents get
-# gotodo's tools without any manual config. Safe to repeat.
-info "Registering the gotodo MCP server with installed agents…"
-"$INSTALL_DIR/$BINARY" setup || warn "MCP setup did not finish for every agent; run 'gotodo setup' later."
+run_setup
 trap - EXIT
 rm -rf "$workdir"
 

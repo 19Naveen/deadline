@@ -168,6 +168,21 @@ curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh |
 
 The script detects your distro (`apt`, `pacman`, `dnf`/`yum`, `zypper`, `apk`), installs `git` and Go ≥ 1.22 if missing (falling back to an official Go toolchain in `~/.local/go` when the distro package is too old or root is unavailable), builds `gotodo` into `~/.local/bin`, and adds it to `PATH` in both `~/.bashrc` and `~/.zshrc` without duplicating lines. It also installs the `deadline` agent skill for Claude Code, Codex, OpenCode and other Agent-Skills-compatible tools, so coding agents can log work to project boards. Restart your terminal afterwards, then run `gotodo`.
 
+**Setup wizard.** When the installer has a terminal it finishes with `gotodo setup`, a short full-screen wizard (nothing changes until you confirm on its summary screen):
+
+1. **Welcome**: which agent CLIs were found (`claude`, `codex`, `opencode`).
+2. **MCP**: tick the agents to register the gotodo MCP server with.
+3. **Stage loops?** (default No): when a card enters a column, gotodo starts an agent with a skill on it. Loops run unattended and use tokens.
+4. **Skill packs**: per agent, whether [pstack](https://github.com/michael-denyer/pstack-claude) and [mattpocock/skills](https://github.com/mattpocock/skills) are present; tick missing ones to install. A pack already present from any source is never offered again. mattpocock for Codex and OpenCode is one shared install in `~/.agents/skills` (needs `npx`; update later with `npx skills update -g`).
+5. **Stages**: per development column (todo, indev, testing-review, blocked, shipped): on/off, agent, model, skill (pick from installed skills or type one) and access (`readonly`, `edits`, `full`). Defaults: indev and testing-review on with Claude, `edits` access. Personal boards (doing/done) are set with `gotodo loops set`.
+6. **Summary**: confirm, then each step shows its result; a failed pack install does not stop the rest. An existing `~/.config/gotodo/loops.json` is only replaced if you choose to.
+
+Without a terminal (CI, `--yes`) the installer runs `gotodo setup -yes -no-loops`, which only registers the MCP server. Installer flags pass through: `--yes` skips the wizard, `--loops` / `--no-loops` preset the loops question (with `--yes`, `--loops` writes default loops when no config exists). Run `gotodo setup` again any time; `gotodo setup -dry-run` previews the MCP changes.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --yes --no-loops
+```
+
 **Manual install:**
 
 ```bash

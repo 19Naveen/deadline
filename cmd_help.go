@@ -71,8 +71,10 @@ var helpGroups = []struct {
 		{name: "context", usage: "gotodo context <id>", summary: "print everything needed to resume a task, incl. working notes"},
 		{name: "mcp", usage: "gotodo mcp", summary: "run the MCP server on stdio (agents start it themselves)",
 			details: []string{"You never run this by hand: gotodo setup registers it and each agent starts it per session."}},
-		{name: "setup", usage: "gotodo setup [-remove] [-dry-run]", summary: "register the MCP server with Claude Code, Codex and OpenCode",
+		{name: "setup", usage: "gotodo setup [-yes] [-loops|-no-loops] [-remove] [-dry-run]", summary: "setup wizard: MCP server, skill packs and stage loops",
 			details: []string{
+				"In a terminal it opens a wizard; -yes (or no terminal) only registers the MCP server everywhere.",
+				"-loops/-no-loops preset the stage-loops question; with -yes, -loops writes defaults if no loops.json exists.",
 				"Runs automatically from install.sh. Safe to repeat; skips agents that are not installed.",
 				"Claude Code: claude mcp add -s user. Codex: a marked block in ~/.codex/config.toml.",
 				"OpenCode: merges mcp.gotodo into ~/.config/opencode/opencode.json (left alone if it can't be parsed).",
