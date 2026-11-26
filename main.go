@@ -18,6 +18,11 @@
 //	gotodo edit 3fa1c9e2 -worktree ../deadline-parser
 //	gotodo delete 3fa1c9e2
 //	gotodo version
+//	gotodo standup -since 24h -format markdown              # paste-ready activity summary
+//	gotodo pr 3fa1c9e2 https://github.com/o/r/pull/12        # link a PR ("" clears)
+//	gotodo pr sync -dry-run                                  # merged ships, failing CI blocks (via gh)
+//	gotodo serve -addr 127.0.0.1:7777                        # read-only web board, loopback only
+//	gotodo notify -watch -interval 1m                        # desktop notifications
 //
 // The global -file flag, when given, must precede the subcommand.
 package main
@@ -121,11 +126,19 @@ func run(argv []string) error {
 		return runEdit(path, args[1:])
 	case "delete":
 		return runDelete(path, args[1:])
+	case "standup":
+		return runStandup(path, args[1:])
+	case "pr":
+		return runPR(path, args[1:])
+	case "serve":
+		return runServe(path, args[1:])
+	case "notify":
+		return runNotify(path, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete, standup, pr, serve, notify or version)", args[0])
 	}
 }
 
