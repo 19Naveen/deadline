@@ -156,7 +156,7 @@ func TestDetailOmitsUnsetAgentFields(t *testing.T) {
 	m := fixedClock(NewBoardModel(seeded(t)))
 	m.SetSize(120, 40)
 	out := stripANSI(press(m, "enter").View())
-	for _, absent := range []string{"Priority", "Labels", "Blocked by", "Claimed by", "Last agent", "awaiting approval", "o Open", "y Approve"} {
+	for _, absent := range []string{"Priority", "Labels", "Blocked by", "Claimed by", "Last agent", "awaiting approval", "ready to verify", "o Open", "v Verify"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("detail shows unset %q:\n%s", absent, out)
 		}
@@ -454,7 +454,7 @@ func TestApproveShipsReviewedCardAsHuman(t *testing.T) {
 	m.selectTaskID(id)
 	m = press(m, "enter")
 	out := stripANSI(m.View())
-	for _, want := range []string{"awaiting approval", "y Approve"} {
+	for _, want := range []string{"awaiting approval", "v Verify & ship"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("detail is missing %q:\n%s", want, out)
 		}

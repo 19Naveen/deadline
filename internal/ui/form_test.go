@@ -77,7 +77,7 @@ func TestFormShowsStartOfLongValues(t *testing.T) {
 func TestFormHintsFollowFocus(t *testing.T) {
 	m, _, child := editForm(t, 120, 40)
 	out := stripANSI(m.renderForm()) // Title focused
-	if !strings.Contains(out, "required") || strings.Contains(out, "dd/mm/yyyy") || strings.Contains(out, "comma-separated") {
+	if !strings.Contains(out, "required") || strings.Contains(out, "dd/mm/yyyy") || strings.Contains(out, "type to search") {
 		t.Errorf("hints shown on unfocused fields:\n%s", out)
 	}
 	if strings.Contains(out, "ctrl+j") {
@@ -92,8 +92,8 @@ func TestFormHintsFollowFocus(t *testing.T) {
 	}
 	m.field = fieldAttachments
 	m.applyFieldFocus()
-	if out := stripANSI(m.renderForm()); strings.Count(out, "comma-separated") != 1 {
-		t.Errorf("want one comma-separated hint, on the focused field:\n%s", out)
+	if out := stripANSI(m.renderForm()); strings.Count(out, "type to search") != 1 || !strings.Contains(out, "⌫ Remove") {
+		t.Errorf("want one search hint, on the focused field, and the chip keys:\n%s", out)
 	}
 }
 

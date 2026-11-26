@@ -300,11 +300,11 @@ func (m AppModel) renderHelp() string {
 		{"tab", "next field"},
 		{"ctrl+j", "new line in description"},
 		{"deadline", "hjkl pick a day, t today"},
-		{"parent", "type to filter, ↑/↓ enter"},
+		{"pickers", "type to filter, ↑/↓ enter"},
 		{"enter", "save, esc cancel"},
 	}) + "\n\n" + helpSection("Open task", [][2]string{
 		{"o", "open attachment or note"},
-		{"y", "approve: ship from review"},
+		{"v y", "verify & ship / approve"},
 	}) + "\n\n" + helpSection("Pages", [][2]string{
 		{"archive", "j/k select"},
 		{"calendar", "h/l month, t today"},
