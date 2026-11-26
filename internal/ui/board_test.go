@@ -821,12 +821,64 @@ func TestFormTabCyclesFields(t *testing.T) {
 		t.Errorf("field = %d, want fieldParent after four tabs", m.field)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldAttachments {
+		t.Errorf("field = %d, want fieldAttachments", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.field != fieldWorkingNotes {
+		t.Errorf("field = %d, want fieldWorkingNotes", m.field)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.field != fieldTitle {
 		t.Errorf("field = %d, want it to wrap back to fieldTitle", m.field)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if m.field != fieldParent {
-		t.Errorf("field = %d, want fieldParent after shift+tab from the first field", m.field)
+	if m.field != fieldWorkingNotes {
+		t.Errorf("field = %d, want fieldWorkingNotes after shift+tab from the first field", m.field)
+	}
+}
+
+func TestDocumentFieldsRoundTripAndDetail(t *testing.T) {
+	b := &task.Board{}
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(120, 40)
+	m = press(m, "a")
+	m.title.SetValue("Documents")
+	m.attachments.SetValue(`"brief, final.docx",reference.pdf`)
+	m.workingNotes.SetValue("docs/task.md,phase2.md")
+	m = press(m, "enter")
+	if len(b.Tasks) != 1 || len(b.Tasks[0].Attachments) != 2 || b.Tasks[0].Attachments[0] != "brief, final.docx" || len(b.Tasks[0].WorkingNotes) != 2 {
+		t.Fatalf("document fields not saved: %+v", b.Tasks)
+	}
+	m = press(m, "enter")
+	out := stripANSI(m.renderDetail())
+	for _, text := range []string{"Attachments", "brief, final.docx", "Working notes", "docs/task.md"} {
+		if !strings.Contains(out, text) {
+			t.Errorf("detail missing %q:\n%s", text, out)
+		}
+	}
+	m = press(m, "e")
+	if m.attachments.Value() != `"brief, final.docx",reference.pdf` {
+		t.Errorf("attachment CSV lost quoting: %q", m.attachments.Value())
+	}
+}
+
+func TestDocumentFieldsFitShortTerminal(t *testing.T) {
+	for _, height := range []int{15, 18, 20} {
+		m := fixedClock(NewBoardModel(&task.Board{}))
+		m.SetSize(100, height)
+		m = press(m, "a")
+		for _, field := range []int{fieldAttachments, fieldWorkingNotes} {
+			m.field = field
+			m.applyFieldFocus()
+			view := stripANSI(m.renderForm())
+			if got := lipgloss.Height(view) + 1; got > height {
+				t.Errorf("height %d field %d: form uses %d rows:\n%s", height, field, got, view)
+			}
+			if !strings.Contains(view, "Attachments") || !strings.Contains(view, "Working notes") {
+				t.Errorf("height %d field %d: document fields hidden:\n%s", height, field, view)
+			}
+		}
 	}
 }
 
@@ -1829,9 +1881,8 @@ func TestDetailPopupShortDescriptionHasNoScrollChrome(t *testing.T) {
 	}
 }
 
-// A short body renders at its own height, with no padded window; only a
-// long one opens the capped 15-row viewport.
-func TestDetailShortBodyIsCompactLongBodyCaps(t *testing.T) {
+// Short bodies reserve the same ten rows; long bodies cap at fifteen.
+func TestDetailShortBodyHasMinimumHeightLongBodyCaps(t *testing.T) {
 	short := &task.Board{}
 	short.Add("Short", "one line", nil, ref)
 	long := &task.Board{}
@@ -1843,6 +1894,14 @@ func TestDetailShortBodyIsCompactLongBodyCaps(t *testing.T) {
 	longModel := fixedClock(NewBoardModel(long))
 	longModel.SetSize(120, 40)
 	longModel = press(longModel, "enter")
+	empty := &task.Board{}
+	empty.Add("Empty", "", nil, ref)
+	emptyModel := fixedClock(NewBoardModel(empty))
+	emptyModel.SetSize(120, 40)
+	emptyModel = press(emptyModel, "enter")
+	if got, want := lipgloss.Height(shortModel.renderDetail()), lipgloss.Height(emptyModel.renderDetail()); got != want {
+		t.Errorf("short height = %d, empty height = %d; want equal", got, want)
+	}
 	if got, long := lipgloss.Height(shortModel.renderDetail()), lipgloss.Height(longModel.renderDetail()); got >= long {
 		t.Errorf("short detail height = %d, long detail height = %d; want the short one compact", got, long)
 	}

@@ -207,13 +207,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 
 `enter` on a card opens it centred on the screen: the full title, its
 parent, deadline, worktree and ID, then the subtask checklist and the
-description. Long bodies scroll with `j`/`k`; short ones stay compact. It is
+description, attachments and working notes. The body reserves at least ten rows
+when space permits; long bodies scroll with `j`/`k`. It is
 read-only, but `s`, `e` and `d` work from there.
 
 Adding and editing open the same form, centred in the same place. `tab` and
-`shift+tab` move between Title, Description, Deadline, Worktree and Parent.
+`shift+tab` move between Title, Description, Deadline, Worktree, Parent,
+Attachments and Working notes.
 Worktree is optional free text — the git worktree path or branch the work
 lives in — and a new subtask starts with its parent's.
+Attachments are paths to user-provided reference files; Working notes are
+paths to agent-created documents. Enter multiple paths as comma-separated CSV,
+quoting a path if it contains a comma. Paths are references, not copies.
 On Parent, type a title or ID to filter the visible dropdown, use `up`/`down`
 to highlight a match, and press `enter` to choose it. Clear the text for no
 parent. The dropdown shows titles and short IDs together, so nothing must be
@@ -288,8 +293,13 @@ gotodo show 3fa1c9e2                         # details, parent and subtasks
 gotodo move 3fa1c9e2 testing-review          # any unique id prefix works
 gotodo edit 3fa1c9e2 -parent 91bc2f0a         # attach; -parent "" detaches
 gotodo edit 3fa1c9e2 -worktree ../app-parser   # where the work lives; "" clears
+gotodo edit 3fa1c9e2 -attachment "brief.docx" -working-note docs/task.md
 gotodo delete 3fa1c9e2                       # no confirm; list first, there is no undo
 ```
+
+Repeat `-attachment` or `-working-note` to specify multiple paths. On `edit`,
+each supplied flag replaces that entire list; supply all paths to keep, or an
+empty value to clear it. `gotodo show` displays the recorded paths.
 
 The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). A bare `gotodo -h`, or `init`, `add` or `list` with `-h`, prints help without changing anything.
 

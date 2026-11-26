@@ -271,6 +271,31 @@ func (b *Board) SetWorktree(id, worktree string, now time.Time) error {
 	return nil
 }
 
+// SetDocuments replaces the task's reference paths without copying files.
+func (b *Board) SetDocuments(id string, attachments, notes []string, now time.Time) error {
+	t, err := b.find(id)
+	if err != nil {
+		return err
+	}
+	clean := func(paths []string) []string {
+		var result []string
+		for _, path := range paths {
+			if path = strings.TrimSpace(path); path != "" {
+				result = append(result, path)
+			}
+		}
+		return result
+	}
+	attachments, notes = clean(attachments), clean(notes)
+	if slices.Equal(t.Attachments, attachments) && slices.Equal(t.WorkingNotes, notes) {
+		return nil
+	}
+	t.Attachments, t.WorkingNotes = attachments, notes
+	t.UpdatedAt = now
+	b.markChanged(id)
+	return nil
+}
+
 // Delete removes a task and records a tombstone. A deleted parent's children
 // are detached, not deleted.
 func (b *Board) Delete(id string) error {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -40,6 +41,8 @@ const (
 	fieldDeadline
 	fieldWorktree
 	fieldParent
+	fieldAttachments
+	fieldWorkingNotes
 	fieldCount
 )
 
@@ -52,13 +55,15 @@ type BoardModel struct {
 	focus focusMode
 	mode  boardMode
 
-	title    textinput.Model
-	desc     textarea.Model // multi-line: ctrl+j inserts a newline, enter saves
-	deadline textinput.Model
-	worktree textinput.Model
-	parent   textinput.Model
-	field    int        // which form field has focus
-	picker   datePicker // the deadline calendar, when open
+	title        textinput.Model
+	desc         textarea.Model // multi-line: ctrl+j inserts a newline, enter saves
+	deadline     textinput.Model
+	worktree     textinput.Model
+	parent       textinput.Model
+	attachments  textinput.Model
+	workingNotes textinput.Model
+	field        int        // which form field has focus
+	picker       datePicker // the deadline calendar, when open
 	// The parent field filters eligible roots; formParentID is set only once
 	// Enter confirms the highlighted option.
 	formParentID   string
@@ -96,6 +101,8 @@ func NewBoardModel(b *task.Board) BoardModel {
 	m.deadline = line("DD/MM/YYYY", 10)
 	m.worktree = line("path or branch (optional)", 500)
 	m.parent = line("type a task title or ID (optional)", 200)
+	m.attachments = line("reference paths", 4000)
+	m.workingNotes = line("agent document paths", 4000)
 
 	m.desc = textarea.New()
 	m.desc.Placeholder = "Write details, context, or Markdown…"
@@ -153,6 +160,8 @@ func (m *BoardModel) sizeForm() {
 	m.deadline.Width = dl - 3
 	m.worktree.Width = wt - 3
 	m.parent.Width = inner - 3
+	m.attachments.Width = dl - 3
+	m.workingNotes.Width = wt - 3
 	m.desc.SetWidth(inner)
 	rows, _ := m.formRows()
 	m.desc.SetHeight(rows)
@@ -169,8 +178,14 @@ func (m BoardModel) formRows() (rows int, calendar bool) {
 	// Content budget: one AppModel tab row and the panel's two border rows.
 	budget := m.height - 3
 	fixed := 11 + m.formGaps()
+	if m.showDocumentFields() {
+		fixed += 2
+	}
 	if m.compactParentForm() {
 		fixed = 10 + m.formGaps()
+	}
+	if m.compactDocumentForm() {
+		fixed--
 	}
 	if m.field == fieldParent {
 		fixed += m.parentDropdownHeight()
@@ -183,7 +198,7 @@ func (m BoardModel) formRows() (rows int, calendar bool) {
 	if calendar {
 		cal = lipgloss.Height(m.picker.View(m.now())) + 2 // blank row + hint
 	}
-	if m.compactParentForm() {
+	if m.compactParentForm() || m.compactDocumentForm() {
 		return 1, false
 	}
 	if budget-fixed-cal < descMinRows {
@@ -580,6 +595,7 @@ func (m BoardModel) detailBudget() int {
 
 // detailMaxBodyRows caps the scrolling body even on a tall terminal.
 const detailMaxBodyRows = 15
+const detailMinBodyRows = 10
 
 // detailLayout splits the detail popup into fixed parts (head, props) and the
 // body (subtasks, description), which scrolls once it outgrows window rows.
@@ -595,7 +611,7 @@ func (m BoardModel) detailLayout(t task.Task, w int) detailLayout {
 	if len(l.props) > 0 {
 		avail-- // blank row between props and body
 	}
-	if l.window = min(len(l.body), detailMaxBodyRows, avail); l.window < 2 {
+	if l.window = min(max(len(l.body), detailMinBodyRows), detailMaxBodyRows, avail); l.window < 2 {
 		l.window = 0 // not even a label and one row: drop the body
 	}
 	return l
@@ -616,14 +632,18 @@ func (m BoardModel) renderDetail() string {
 	rows := append(append([]string{}, l.head...), l.props...)
 	counter := ""
 	if l.window > 0 {
-		start := min(max(m.detailScroll, 0), len(l.body)-l.window)
+		start := min(max(m.detailScroll, 0), max(len(l.body)-l.window, 0))
 		if l.window < len(l.body) {
 			counter = fmt.Sprintf("%d–%d / %d", start+1, start+l.window, len(l.body))
 		}
 		if len(l.props) > 0 {
 			rows = append(rows, "")
 		}
-		rows = append(rows, l.body[start:start+l.window]...)
+		end := min(start+l.window, len(l.body))
+		rows = append(rows, l.body[start:end]...)
+		for i := end - start; i < l.window; i++ {
+			rows = append(rows, "")
+		}
 	}
 	rows = append(rows, detailFoot(counter, cw)...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
@@ -765,7 +785,45 @@ func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
 			rows = append(rows, indent(line))
 		}
 	}
+	for _, section := range []struct {
+		label string
+		paths []string
+	}{{"Attachments", t.Attachments}, {"Working notes", t.WorkingNotes}} {
+		if len(section.paths) == 0 {
+			continue
+		}
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, detailLabel(section.label, "", w))
+		for _, path := range section.paths {
+			for _, line := range strings.Split(lipgloss.NewStyle().Width(max(w-2, 1)).Render(path), "\n") {
+				rows = append(rows, indent(line))
+			}
+		}
+	}
 	return rows
+}
+
+// Document paths use CSV quoting, allowing commas and spaces in file names.
+func formatDocumentPaths(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	writer := csv.NewWriter(&out)
+	_ = writer.Write(paths)
+	writer.Flush()
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+func parseDocumentPaths(value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	r := csv.NewReader(strings.NewReader(value))
+	r.TrimLeadingSpace = true
+	return r.Read()
 }
 
 // childDetailLine is one checklist row: a tick or circle, the title, and
@@ -823,6 +881,12 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time, w
 	m.desc.SetValue(desc)
 	m.deadline.SetValue(dl)
 	m.worktree.SetValue(worktree)
+	m.attachments.SetValue("")
+	m.workingNotes.SetValue("")
+	if t, ok := m.board.TaskByID(editID); ok {
+		m.attachments.SetValue(formatDocumentPaths(t.Attachments))
+		m.workingNotes.SetValue(formatDocumentPaths(t.WorkingNotes))
+	}
 	m.formParentID = parentID
 	m.parentIndex = 0
 	m.parentChoosing = false
@@ -853,6 +917,8 @@ func (m *BoardModel) closeForm() {
 	m.deadline.Blur()
 	m.worktree.Blur()
 	m.parent.Blur()
+	m.attachments.Blur()
+	m.workingNotes.Blur()
 	m.formParentID = ""
 	m.parent.SetValue("")
 	m.parentIndex = 0
@@ -867,6 +933,8 @@ func (m *BoardModel) applyFieldFocus() {
 	m.deadline.Blur()
 	m.worktree.Blur()
 	m.parent.Blur()
+	m.attachments.Blur()
+	m.workingNotes.Blur()
 	switch m.field {
 	case fieldTitle:
 		m.title.Focus()
@@ -883,6 +951,12 @@ func (m *BoardModel) applyFieldFocus() {
 		m.parent.Focus()
 		m.parent.CursorEnd()
 		m.parentIndex = 0
+	case fieldAttachments:
+		m.attachments.Focus()
+		m.attachments.CursorEnd()
+	case fieldWorkingNotes:
+		m.workingNotes.Focus()
+		m.workingNotes.CursorEnd()
 	}
 	if m.field == fieldDeadline {
 		m.seedPicker()
@@ -920,7 +994,7 @@ func (m BoardModel) renderForm() string {
 		m.title.View(),
 	}
 	rows = append(rows, spacer...)
-	if !m.compactParentForm() {
+	if !m.compactParentForm() && !m.compactDocumentForm() {
 		rows = append(rows,
 			formLabel(fieldDesc, m.field, "Description", "ctrl+j new line", contentWidth),
 			m.desc.View())
@@ -939,6 +1013,12 @@ func (m BoardModel) renderForm() string {
 		if dropdown := m.renderParentDropdown(contentWidth); dropdown != "" {
 			rows = append(rows, dropdown)
 		}
+	}
+	if m.showDocumentFields() {
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Width(dlW).Render(formLabel(fieldAttachments, m.field, "Attachments", "", dlW)+"\n"+m.attachments.View()),
+			"  ",
+			lipgloss.NewStyle().Width(wtW).Render(formLabel(fieldWorkingNotes, m.field, "Working notes", "CSV paths", wtW)+"\n"+m.workingNotes.View())))
 	}
 	rows = append(rows, m.formRelationships(contentWidth)...)
 	if m.err != "" {
@@ -1018,10 +1098,21 @@ func (m BoardModel) compactParentForm() bool {
 	return m.field == fieldParent && m.height > 0 && m.height < 19
 }
 
+func (m BoardModel) showDocumentFields() bool {
+	return !m.compactParentForm() && (m.height <= 0 || m.height >= 24 ||
+		m.field == fieldAttachments || m.field == fieldWorkingNotes)
+}
+
+func (m BoardModel) compactDocumentForm() bool {
+	return m.height > 0 && m.height < 17 &&
+		(m.field == fieldAttachments || m.field == fieldWorkingNotes)
+}
+
 // formGaps is the number of blank rows between form sections; short terminals
 // drop them so the form still fits.
 func (m BoardModel) formGaps() int {
-	if m.height > 0 && m.height < 18 {
+	if m.height > 0 && (m.height < 18 ||
+		(m.height < 21 && (m.field == fieldAttachments || m.field == fieldWorkingNotes))) {
 		return 0
 	}
 	return 3
@@ -1058,6 +1149,9 @@ func (m BoardModel) parentDropdownHeight() int {
 		return desired
 	}
 	base := 12 + m.formGaps() // fixed form furniture plus one description row
+	if m.showDocumentFields() {
+		base += 2
+	}
 	if m.compactParentForm() {
 		base = 10 + m.formGaps() // description section hidden while choosing
 	}
@@ -1402,6 +1496,18 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		}
 		parentID := m.formParentID
 		worktree := m.worktree.Value()
+		attachments, err := parseDocumentPaths(m.attachments.Value())
+		if err != nil {
+			m.err = "invalid attachments: use CSV-quoted paths"
+			m.sizeForm()
+			return m, nil
+		}
+		notes, err := parseDocumentPaths(m.workingNotes.Value())
+		if err != nil {
+			m.err = "invalid working notes: use CSV-quoted paths"
+			m.sizeForm()
+			return m, nil
+		}
 
 		selectedID := m.editID
 		if m.editID != "" {
@@ -1424,6 +1530,11 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			}
 		}
 		if err := m.board.SetWorktree(selectedID, worktree, m.now()); err != nil {
+			m.err = err.Error()
+			m.sizeForm()
+			return m, nil
+		}
+		if err := m.board.SetDocuments(selectedID, attachments, notes, m.now()); err != nil {
 			m.err = err.Error()
 			m.sizeForm()
 			return m, nil
@@ -1497,6 +1608,10 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.desc, cmd = m.desc.Update(k)
 	case fieldWorktree:
 		m.worktree, cmd = m.worktree.Update(k)
+	case fieldAttachments:
+		m.attachments, cmd = m.attachments.Update(k)
+	case fieldWorkingNotes:
+		m.workingNotes, cmd = m.workingNotes.Update(k)
 	case fieldDeadline:
 		m.deadline, cmd = m.deadline.Update(k)
 		m.seedPicker()

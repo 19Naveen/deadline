@@ -51,9 +51,17 @@ const projectDirName = ".deadline"
 const projectBoardFile = "board.json"
 
 // addUsage is printed for `add -h` and malformed add invocations.
-const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...] [-parent ID] [-worktree PATH]`
+const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]...`
 
-const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-parent ID] [-worktree PATH]`
+const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]...`
+
+type pathFlags []string
+
+func (p *pathFlags) String() string { return strings.Join(*p, ", ") }
+func (p *pathFlags) Set(value string) error {
+	*p = append(*p, value)
+	return nil
+}
 
 // version is the built revision, stamped via
 //
@@ -293,6 +301,9 @@ func runAdd(path string, args []string) error {
 	statusStr := fs.String("status", "", "starting column")
 	parentStr := fs.String("parent", "", "parent task ID prefix")
 	worktree := fs.String("worktree", "", "git worktree path or branch for this task")
+	var attachments, notes pathFlags
+	fs.Var(&attachments, "attachment", "reference path (repeatable)")
+	fs.Var(&notes, "working-note", "agent working document path (repeatable)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -344,6 +355,9 @@ func runAdd(path string, args []string) error {
 	}
 	id, addedTitle := t.ID, t.Title
 	if err := board.SetWorktree(id, *worktree, now); err != nil {
+		return err
+	}
+	if err := board.SetDocuments(id, attachments, notes, now); err != nil {
 		return err
 	}
 	if status != board.Statuses()[0] {
@@ -471,6 +485,12 @@ func runShow(path string, args []string) error {
 	if t.Worktree != "" {
 		fmt.Printf("worktree: %s\n", t.Worktree)
 	}
+	for _, path := range t.Attachments {
+		fmt.Printf("attachment: %s\n", path)
+	}
+	for _, path := range t.WorkingNotes {
+		fmt.Printf("working note: %s\n", path)
+	}
 	if t.Description != "" {
 		fmt.Printf("description:\n%s\n", t.Description)
 	}
@@ -544,6 +564,9 @@ func runEdit(path string, args []string) error {
 	deadlineFlag := fs.String("deadline", "", "replacement deadline as DD/MM/YYYY (blank clears)")
 	parentFlag := fs.String("parent", "", "replacement parent ID prefix (blank detaches)")
 	worktreeFlag := fs.String("worktree", "", "replacement worktree path or branch (blank clears)")
+	var attachments, notes pathFlags
+	fs.Var(&attachments, "attachment", "replace reference paths (repeatable; blank clears)")
+	fs.Var(&notes, "working-note", "replace working document paths (repeatable; blank clears)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -598,6 +621,17 @@ func runEdit(path string, args []string) error {
 	}
 	if set["worktree"] {
 		if err := board.SetWorktree(t.ID, *worktreeFlag, now); err != nil {
+			return err
+		}
+	}
+	if set["attachment"] || set["working-note"] {
+		if !set["attachment"] {
+			attachments = t.Attachments
+		}
+		if !set["working-note"] {
+			notes = t.WorkingNotes
+		}
+		if err := board.SetDocuments(t.ID, attachments, notes, now); err != nil {
 			return err
 		}
 	}

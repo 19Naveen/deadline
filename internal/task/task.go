@@ -62,18 +62,20 @@ type Transition struct {
 
 // Task is one card on the board.
 type Task struct {
-	ID          string       `json:"id"`
-	ParentID    string       `json:"parent_id,omitempty"`
-	Title       string       `json:"title"`
-	Description string       `json:"description,omitempty"`
-	Deadline    *time.Time   `json:"deadline,omitempty"`
-	Worktree    string       `json:"worktree,omitempty"` // git worktree path or branch the work lives in
-	Status      Status       `json:"status"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	Archived    bool         `json:"archived,omitempty"`
-	ArchivedAt  *time.Time   `json:"archived_at,omitempty"`
-	History     []Transition `json:"history,omitempty"`
+	ID           string       `json:"id"`
+	ParentID     string       `json:"parent_id,omitempty"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description,omitempty"`
+	Deadline     *time.Time   `json:"deadline,omitempty"`
+	Worktree     string       `json:"worktree,omitempty"` // git worktree path or branch the work lives in
+	Attachments  []string     `json:"attachments,omitempty"`
+	WorkingNotes []string     `json:"working_notes,omitempty"`
+	Status       Status       `json:"status"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	Archived     bool         `json:"archived,omitempty"`
+	ArchivedAt   *time.Time   `json:"archived_at,omitempty"`
+	History      []Transition `json:"history,omitempty"`
 }
 
 // NewTask builds a todo task with a fresh random ID; deadline may be nil.

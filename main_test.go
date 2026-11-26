@@ -117,6 +117,48 @@ func TestHeadlessRoundTripThroughRun(t *testing.T) {
 	}
 }
 
+func TestHeadlessDocumentReferences(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	if err := runAdd(path, []string{"Docs", "-attachment", "brief, final.docx", "-attachment", "ref.pdf", "-working-note", "docs/task.md"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := b.Tasks[0].ID
+	out := captureStdout(t, func() {
+		if err := runShow(path, []string{id}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{"brief, final.docx", "ref.pdf", "docs/task.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show missing %q: %s", want, out)
+		}
+	}
+	if err := runEdit(path, []string{id, "-attachment", "", "-working-note", "phase2.md", "-working-note", "frontend.md"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Tasks[0].Attachments) != 0 || len(b.Tasks[0].WorkingNotes) != 2 {
+		t.Fatalf("unexpected documents after edit: %+v", b.Tasks[0])
+	}
+	if err := runEdit(path, []string{id, "-attachment", "new.docx"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err = task.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Tasks[0].WorkingNotes) != 2 {
+		t.Fatalf("unmodified notes lost: %+v", b.Tasks[0])
+	}
+}
+
 func TestBoardReportsTypeAndColumnsWithoutStoragePath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "board.json")
 	out := captureStdout(t, func() {
