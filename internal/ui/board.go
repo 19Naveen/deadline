@@ -1555,6 +1555,7 @@ func (m BoardModel) approve(t task.Task) (BoardModel, tea.Cmd) {
 		m.err = err.Error()
 		return m, nil
 	}
+	m.reconcile()
 	m.pushUndo(undoEntry{what: "approve " + t.Title, restore: before, selectID: t.ID})
 	m.mode = modeNormal
 	m.info = "approved: " + t.Title
@@ -1831,6 +1832,7 @@ func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.mode = modeNormal
 		m.grabID = ""
 		m.grabSnap = nil
+		m.reconcile()
 		m.clampSelection()
 		return m, dirty()
 	case "esc":
@@ -1923,4 +1925,21 @@ func (m *BoardModel) moveItem(delta int) {
 		next = n - 1
 	}
 	m.sel[m.col] = next
+}
+
+// reconcile applies the dependency and claim rules after a dropped move:
+// dependants of a shipped card unblock, and its claim is released. Cards it
+// moves are named in the footer.
+func (m *BoardModel) reconcile() {
+	moved := m.board.Reconcile(m.now())
+	if len(moved) == 0 {
+		return
+	}
+	var names []string
+	for _, id := range moved {
+		if t, ok := m.board.TaskByID(id); ok {
+			names = append(names, shortTaskID(t.ID)+" → "+statusWord(t.Status))
+		}
+	}
+	m.info = "dependencies: " + strings.Join(names, ", ")
 }

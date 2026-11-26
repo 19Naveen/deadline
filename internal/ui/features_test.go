@@ -825,3 +825,31 @@ func TestHelpListsNewKeys(t *testing.T) {
 		t.Errorf("help is %d rows on a 24-row terminal", h)
 	}
 }
+
+// Dropping a blocker in the terminal column unblocks its dependants.
+func TestDroppingBlockerInDoneUnblocksDependants(t *testing.T) {
+	b := &task.Board{}
+	b.SetColumns(task.DevColumns)
+	blocker := b.Add("Blocker", "", nil, ref).ID
+	dep := b.Add("Dependant", "", nil, ref).ID
+	if err := b.SetBlockedBy(dep, []string{blocker}, ref); err != nil {
+		t.Fatal(err)
+	}
+	b.SyncBlocked(ref)
+	m := fixedClock(NewBoardModel(b))
+	m.SetSize(140, 40)
+	m = press(m, "m")
+	for range b.Statuses()[1:] {
+		m = press(m, "l")
+	}
+	m = press(m, "enter")
+	if got, _ := b.TaskByID(blocker); got.Status != task.StatusShipped {
+		t.Fatalf("blocker = %s, want shipped", got.Status)
+	}
+	if got, _ := b.TaskByID(dep); got.Status != task.StatusTodo {
+		t.Errorf("dependant = %s, want todo after its blocker shipped", got.Status)
+	}
+	if !strings.Contains(stripANSI(m.View()), "dependencies:") {
+		t.Errorf("footer does not report the unblock:\n%s", stripANSI(m.View()))
+	}
+}
