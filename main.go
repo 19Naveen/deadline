@@ -43,6 +43,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"gotodo/internal/loops"
 	"gotodo/internal/task"
 	"gotodo/internal/ui"
 )
@@ -125,6 +126,30 @@ func run(argv []string) error {
 	if len(args) == 0 {
 		return runTUI(path)
 	}
+	err := runCommand(path, args)
+	if err == nil && mutatingCommands[args[0]] {
+		dispatchLoops(path)
+	}
+	return err
+}
+
+// mutatingCommands are the subcommands that can move a card, so a stage
+// loop may need starting afterwards.
+var mutatingCommands = map[string]bool{
+	"add": true, "edit": true, "move": true, "delete": true, "next": true,
+	"claim": true, "release": true, "pr": true, "wip": true, "approval": true,
+}
+
+// dispatchLoops starts any stage loops the last change triggered. Loops are
+// a side effect: a failure is reported but never fails the command.
+func dispatchLoops(path string) {
+	if _, err := loops.Dispatch(path, time.Now()); err != nil {
+		fmt.Fprintln(os.Stderr, "gotodo: loops:", err)
+	}
+}
+
+// runCommand runs one headless subcommand against the board at path.
+func runCommand(path string, args []string) error {
 	switch args[0] {
 	case "add":
 		return runAdd(path, args[1:])
@@ -199,9 +224,16 @@ func runBoard(path string, args []string) error {
 	return nil
 }
 
-// resolveBoardPath returns the nearest project board walking up from the
-// working directory, else the global personal board.
+// resolveBoardPath returns GOTODO_BOARD when a stage loop set it (its agent
+// may run in a worktree that has no .deadline of its own), else the nearest
+// project board walking up from the working directory, else the global
+// personal board. -file overrides all of these.
 func resolveBoardPath() (string, error) {
+	if env := strings.TrimSpace(os.Getenv(loops.BoardEnv)); env != "" {
+		if st, err := os.Stat(env); err == nil && !st.IsDir() {
+			return env, nil
+		}
+	}
 	if board, err := findProjectBoard(); err != nil {
 		return "", err
 	} else if board != "" {

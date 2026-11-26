@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,5 +58,26 @@ func TestHelpCommandsAreAllDispatched(t *testing.T) {
 	err := run([]string{"-file", path, "nope"})
 	if err == nil || !strings.Contains(err.Error(), "gotodo help") {
 		t.Errorf("unknown command error = %v, want a pointer to gotodo help", err)
+	}
+}
+
+// A loop's agent may run in a worktree with no .deadline; GOTODO_BOARD
+// points it at the right board, and -file still wins.
+func TestResolveBoardPathHonoursGotodoBoard(t *testing.T) {
+	board := filepath.Join(t.TempDir(), ".deadline", "board.json")
+	if err := os.MkdirAll(filepath.Dir(board), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(board, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, t.TempDir())
+	t.Setenv("GOTODO_BOARD", board)
+	if got, err := resolveBoardPath(); err != nil || got != board {
+		t.Errorf("resolveBoardPath = %q, %v; want %q", got, err, board)
+	}
+	t.Setenv("GOTODO_BOARD", filepath.Join(t.TempDir(), "missing.json"))
+	if got, _ := resolveBoardPath(); got == board {
+		t.Error("a missing GOTODO_BOARD was used")
 	}
 }

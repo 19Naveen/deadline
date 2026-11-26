@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"gotodo/internal/loops"
 	"gotodo/internal/task"
 )
 
@@ -107,6 +108,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.saveErr = err.Error()
 		} else {
 			m.saveErr = ""
+			// A drop or verify may enter a stage with a loop.
+			if p := m.store.Path(); p != "" {
+				if _, err := loops.Dispatch(p, m.now()); err != nil {
+					m.saveErr = "loops: " + err.Error()
+				}
+			}
 		}
 		m.noteBoardStat()
 		return m, nil

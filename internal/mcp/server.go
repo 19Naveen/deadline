@@ -14,8 +14,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
+
+	"gotodo/internal/loops"
 )
 
 // LatestProtocolVersion is offered when the client asks for a version this
@@ -396,6 +399,12 @@ func (s *Server) runTool(tool *Tool, args json.RawMessage) (text string, err err
 	if !tool.ReadOnly && !tool.SavesItself {
 		if err := call.Board.Save(); err != nil {
 			return "", fmt.Errorf("save board: %w", err)
+		}
+	}
+	if !tool.ReadOnly {
+		// A move may enter a stage with a loop; never fail the tool for it.
+		if _, err := loops.Dispatch(s.path, call.Now); err != nil {
+			fmt.Fprintln(os.Stderr, "gotodo mcp: loops:", err)
 		}
 	}
 	return text, nil

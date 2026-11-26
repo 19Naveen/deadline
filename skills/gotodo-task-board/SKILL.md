@@ -81,6 +81,14 @@ Bad: `gotodo add "tax rates frontend"`. Good: the command above. Subtasks get th
 - When a task needs another shipped first, record it with `-blocked-by <id>`. Do not move dependent cards into `blocked` yourself: gotodo auto-blocks them and moves them back when the blockers ship (watch for `auto-blocked` / `unblocked` lines). Cycles are rejected.
 - If output shows `! <column> over WIP limit (n/limit)`, finish or hand off work in that column before starting more. Change limits (`gotodo wip <column> N`) only when the human asks.
 
+## Stage loops
+
+- **You may be running inside a loop.** If `GOTODO_LOOP=1`, gotodo started you because your card entered a column. `GOTODO_AGENT` is already `loop:<stage>` and the card is already claimed for you. Do not run `gotodo claim` or `gotodo next -claim`.
+- **Find the board.** If gotodo started you in a worktree outside the project, the prompt says so. Run every command as `gotodo -file "$GOTODO_BOARD" ...`.
+- **Moving the card is the hand-off.** When your stage's work is done and verified, move the card to the next column, for example `gotodo move <id> testing-review`. That move can start the next stage's loop, so move only when the card is ready. If you are stuck, move the card to `blocked` and say why with `gotodo edit <id> -desc ...`.
+- **Do not reconfigure loops.** `gotodo loops on/off/set/unset/stop` are refused for agents and loops. Report problems on the card instead.
+- **Logs.** `gotodo loops logs <id>` prints the latest run log for a card, and `gotodo loops` shows the live and queued runs.
+
 ## Approval gate
 
 If a move to done/shipped is refused because the board requires approval, leave the card in `testing-review` and tell the human; they approve it in the TUI. Never try to change `gotodo approval` — it is refused for agents.
