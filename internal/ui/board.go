@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"gotodo/internal/loops"
 	"gotodo/internal/project"
 	"gotodo/internal/task"
 )
@@ -34,6 +35,7 @@ const (
 	modeDetail
 	modeSearch // typing a / filter in the footer
 	modeOpen   // choosing a document from the detail popup
+	modeLog    // reading a loop run's log, opened with L
 )
 
 // Fields of the add/edit form, in tab order.
@@ -98,6 +100,14 @@ type BoardModel struct {
 
 	now func() time.Time // injectable clock; tests pin it
 
+	// watch is the app's shared read of the loop state; logView is the L
+	// popup and logFrom the mode it returns to. stopLoop ends a task's
+	// live runs (loops.Stop); tests swap it out.
+	watch    *loopWatch
+	logView  logViewer
+	logFrom  boardMode
+	stopLoop func(boardPath, taskID string, now time.Time) ([]loops.RunRecord, error)
+
 	width      int
 	height     int
 	err        string
@@ -106,7 +116,8 @@ type BoardModel struct {
 
 // NewBoardModel wires a board into a fresh page model.
 func NewBoardModel(b *task.Board) BoardModel {
-	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now, opener: openDocument, git: defaultGit}
+	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now, opener: openDocument, git: defaultGit,
+		watch: &loopWatch{}, stopLoop: loops.Stop}
 	m.sel = make([]int, len(b.Statuses()))
 
 	line := func(placeholder string, limit int) textinput.Model {
@@ -145,6 +156,9 @@ func (m *BoardModel) SetSize(w, h int) {
 	m.width, m.height = w, h
 	m.search.Width = max(min(w-40, 48), 10)
 	m.sizeForm()
+	if m.mode == modeLog {
+		m.rewrapLog()
+	}
 }
 
 const (
@@ -324,6 +338,8 @@ func (m BoardModel) View() string {
 		return m.overlay(m.renderConfirm())
 	case modeOpen:
 		return m.overlay(m.renderOpen())
+	case modeLog:
+		return m.overlay(m.renderLog())
 	}
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		msg := fmt.Sprintf("gotodo needs at least %d columns for the %d-column board. This terminal is %d. Widen it, or press tab for the other pages.",
@@ -473,7 +489,7 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 	if right != "" {
 		room -= lipgloss.Width(right) + 1
 	}
-	if claim := cardClaim(t, m.now(), room-8-1); claim != "" {
+	if claim := m.cardMarker(t, room-8-1); claim != "" {
 		room -= lipgloss.Width(claim) + 1
 		if right != "" {
 			claim += " "
@@ -705,6 +721,9 @@ func (m BoardModel) detailFoot(t task.Task, counter string, width int) []string 
 	}
 	if len(taskDocuments(t)) > 0 {
 		hints = append(hints, keyHint("o", "Open"))
+	}
+	if m.hasLoopLog(t) {
+		hints = append(hints, keyHint("L", "Loop log"))
 	}
 	hints = append(hints, keyHint("s", "Subtask"), keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("esc", "Close"))
 	if counter != "" {
@@ -1215,6 +1234,8 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 		return m.updateSearch(keyMsg)
 	case modeOpen:
 		return m.updateOpen(keyMsg)
+	case modeLog:
+		return m.updateLog(keyMsg)
 	}
 	return m.updateNormal(keyMsg)
 }
@@ -1320,6 +1341,11 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 	case "v":
 		if t, ok := m.selectedTask(); ok && m.inReview(t) {
 			return m.approve(t)
+		}
+		return m, nil
+	case "L":
+		if t, ok := m.selectedTask(); ok && !m.openLog(t) {
+			m.info = "no loop log for this card yet"
 		}
 		return m, nil
 	case "u":
@@ -1606,6 +1632,10 @@ func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	case "y": // the older approve key, kept while the gate is on
 		if t, ok := m.selectedTask(); ok && m.awaitingApproval(t) {
 			return m.approve(t)
+		}
+	case "L":
+		if t, ok := m.selectedTask(); ok {
+			m.openLog(t)
 		}
 	case "esc", "enter", "q":
 		m.mode = modeNormal

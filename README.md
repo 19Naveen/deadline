@@ -149,8 +149,9 @@ Done tasks are left off: a deadline you already met is history, and this page is
 
 ## Agents tab
 
-Fifth page. Who is working on the board, read-only, refreshed whenever the board reloads (about every 2 seconds).
+Fifth page. Who is working on the board, read-only, refreshed whenever the board reloads (about every 2 seconds). `j`/`k` scroll it when it is taller than the terminal (`g`/`G` for the ends).
 
+- **Loops** — stage loop runs: each live run (`⟳ indev  3fa1c9e2  Fix parser   claude · opus  12m`), queued runs (`… testing-review`), then the last 5 finished runs with their result (`✓ done`, `✗ failed`, `■ stopped`, `– skipped`), end time (`26/11 13:11`) and duration. With loops off or not set up it says `Loops are off · gotodo setup or gotodo loops on`.
 - **Agents** — every agent named in move history, a claim, or as a card's last agent. Each row shows the cards it has claimed or in progress (up to 3, then `+N more`), its last activity (`last 2h ago`) and its moves over the last 7 days.
 - **Activity** — the 20 most recent moves across all tasks, newest first: time (`30/07 11:00`), agent (or `you`), short ID, title and `from → to`.
 
@@ -230,6 +231,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `v` | verify & ship: move the selected review card to the terminal column as you |
 | `u` | undo the last move, edit, delete, add or approval (up to 20 steps) |
 | `A` | turn the approval gate on or off |
+| `L` | the selected card's newest loop run log (see [Watching loops](#watching-loops)) |
 | `h` `l` | previous / next column |
 | `j` `k` | previous / next task |
 | `g` `G` | first / last task in the column |
@@ -242,7 +244,8 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 `enter` on a card opens it centred on the screen: the full title, its
 parent, deadline, worktree and ID, then whichever of priority, labels,
 blocked by (up to three, then `+N more`), claim (`until 30/07/2026 15:30`, or
-`expired`), PR, last agent and `awaiting approval` (or `ready to verify`) are
+`expired`), PR, last agent, loop run (`Loop  indev · claude · running 12m`, or
+`indev · done 26/11 13:11`) and `awaiting approval` (or `ready to verify`) are
 set, then the description, the subtask checklist, attachments and working
 notes. The body
 reserves at least ten rows when space permits; long bodies scroll with
@@ -654,7 +657,7 @@ gotodo loops set indev -agent claude -model claude-sonnet-5-5 -skill tdd
 gotodo loops set testing-review -agent codex -skill code-review -permissions readonly
 gotodo loops on
 gotodo loops                 # status: config, stages, skill installed ✓/✗, running and queued runs
-gotodo loops logs 3fa1c9e2   # latest run log for a card (-stage S for one stage)
+gotodo loops logs 3fa1c9e2   # latest run log for a card (-stage S for one stage, -f to follow)
 gotodo loops stop 3fa1c9e2   # kill a card's live runs and release their claims
 gotodo loops dispatch        # start runs for new moves and drain the queue now
 ```
@@ -714,6 +717,13 @@ With `edits`, Claude Code can edit files but cannot run shell commands other tha
 Loops start after every change from the CLI, the TUI, the MCP server and `pr sync`. An agent started by a loop finds the board through `GOTODO_BOARD`, even from a worktree with no `.deadline` of its own. A loop started by a sandboxed agent (for example Codex running `gotodo move`) inherits that sandbox.
 
 The setup wizard (`gotodo setup`, opened by `install.sh`) asks whether you want loops, offers to install the pstack and mattpocock skill packs for agents that lack them, and lets you pick the agent, model, skill and permissions for each stage.
+
+### Watching loops
+
+- **Agents tab** (`tab` to the fifth page): the Loops section at the top lists live, queued and recently finished runs. It refreshes about every 2 seconds.
+- **On the board**: a card with a live run shows `⟳ loop:indev` (or `⟳ indev` in a narrow column) where a claim would show `◆ agent`. Its detail popup has a `Loop` line.
+- **`L` on a card** (on the board or in its detail popup, where the hint `L Loop log` appears once a log exists) opens the newest run log for that card. The viewer opens at the bottom and keeps following new output while you stay there. `j`/`k`, `g`/`G` and `pgup`/`pgdn` scroll. Terminal colour codes are stripped and long lines wrap; only the last 256 KB of a large log is read. `x` stops a live run after a `y`/`n` confirm (the same as `gotodo loops stop`). `esc` goes back.
+- **From a shell**: `gotodo loops` for status, and `gotodo loops logs <id> -f` to print the newest log for a card and follow it until the run ends (`Ctrl+C` stops following, not the run).
 
 ---
 

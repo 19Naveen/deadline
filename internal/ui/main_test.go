@@ -14,6 +14,8 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// Loop config is read from XDG_CONFIG_HOME; never the user's own.
+	os.Setenv("XDG_CONFIG_HOME", empty)
 	defaultGit = func(string, ...string) (string, error) { return "", errors.New("not a git repository") }
 	workingDir = func() (string, error) { return empty, nil }
 	code := m.Run()

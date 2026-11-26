@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"gotodo/internal/loops"
 	"gotodo/internal/task"
 )
 
@@ -19,21 +21,59 @@ const (
 	agentTaskRows = 3
 	// agentWeek is the window for the per-agent move count.
 	agentWeek = 7 * 24 * time.Hour
+	// loopRecentRows is how many finished loop runs the page lists.
+	loopRecentRows = 5
+	// loopQueuedRows caps the queued runs listed before "+N more".
+	loopQueuedRows = 5
 )
 
-// AgentsModel is the read-only page of agent activity. It reads the shared
-// board on every View, so a live reload shows up with no extra wiring.
+// AgentsModel is the read-only page of loop runs and agent activity. It
+// reads the shared board and loop state on every View, so a live reload
+// shows up with no extra wiring. j/k scroll it when it outgrows the screen.
 type AgentsModel struct {
 	board *task.Board
+	watch *loopWatch
 	now   func() time.Time
 
+	scroll int
 	width  int
 	height int
 }
 
 // NewAgentsModel wires a board into the agents page.
 func NewAgentsModel(b *task.Board) AgentsModel {
-	return AgentsModel{board: b, now: time.Now}
+	return AgentsModel{board: b, watch: &loopWatch{}, now: time.Now}
+}
+
+// Update scrolls the page: j/k by a row, g/G to the ends, pgup/pgdn a page.
+func (m AgentsModel) Update(msg tea.Msg) (AgentsModel, tea.Cmd) {
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	_, room := m.layout()
+	switch k.String() {
+	case "j", "down":
+		m.scroll++
+	case "k", "up":
+		m.scroll--
+	case "pgdown", "ctrl+d", " ":
+		m.scroll += max(room-1, 1)
+	case "pgup", "ctrl+u":
+		m.scroll -= max(room-1, 1)
+	case "g", "home":
+		m.scroll = 0
+	case "G", "end":
+		m.scroll = 1 << 30
+	}
+	m.scroll = m.clampScroll(m.scroll)
+	return m, nil
+}
+
+// clampScroll keeps the offset between the top and the last full screen.
+func (m AgentsModel) clampScroll(offset int) int {
+	lines, room := m.layout()
+	return min(max(offset, 0), max(len(lines)-room, 0))
 }
 
 // SetSize records the terminal size for layout.
@@ -136,8 +176,42 @@ func recentActivity(b *task.Board, n int) []activity {
 	return all
 }
 
-// View renders the agents list above the activity feed.
+// pageHints is the footer: a scroll hint when the page overflows.
+func (m AgentsModel) pageHints(scrolls bool) []string {
+	lead := MutedStyle.Render("read-only")
+	if scrolls {
+		lead = keyHint("j/k", "Scroll")
+	}
+	return append([]string{lead}, globalHints()...)
+}
+
+// layout is every body line and the rows pageFrame leaves for them.
+func (m AgentsModel) layout() (lines []string, room int) {
+	lines = m.bodyLines()
+	room = len(lines)
+	if m.height > 0 {
+		width := m.width
+		if width <= 0 {
+			width = 80
+		}
+		room = max(m.height-2-lipgloss.Height(hintBar(width, m.pageHints(true)...)), 0)
+	}
+	return lines, room
+}
+
+// View renders the loop runs, the agents list and the activity feed,
+// scrolled to the current offset.
 func (m AgentsModel) View() string {
+	lines, room := m.layout()
+	scrolls := m.height > 0 && len(lines) > room
+	if scrolls {
+		lines = lines[m.clampScroll(m.scroll):]
+	}
+	return pageFrame(m.width, m.height, strings.Join(lines, "\n"), m.pageHints(scrolls)...)
+}
+
+// bodyLines is the whole page before scrolling: Loops, Agents, Activity.
+func (m AgentsModel) bodyLines() []string {
 	width := m.width
 	if width <= 0 {
 		width = 80
@@ -146,7 +220,8 @@ func (m AgentsModel) View() string {
 	agents := summarizeAgents(m.board, now)
 	feed := recentActivity(m.board, activityFeedSize)
 
-	lines := []string{TitleStyle.Render("Agents") + MutedStyle.Render(" ("+strconv.Itoa(len(agents))+")")}
+	lines := m.loopLines(now, width)
+	lines = append(lines, "", TitleStyle.Render("Agents")+MutedStyle.Render(" ("+strconv.Itoa(len(agents))+")"))
 	if len(agents) == 0 {
 		lines = append(lines, MutedStyle.Render(truncate("no agent activity yet; agents name themselves with "+task.AgentEnv, width)))
 	}
@@ -161,8 +236,83 @@ func (m AgentsModel) View() string {
 	for _, f := range feed {
 		lines = append(lines, m.feedLine(f, now, width))
 	}
-	hints := append([]string{MutedStyle.Render("read-only")}, globalHints()...)
-	return pageFrame(m.width, m.height, strings.Join(lines, "\n"), hints...)
+	return lines
+}
+
+// loopLines is the Loops section: live runs (⟳), queued runs (…) and the
+// last few finished ones, or one muted line when loops are off.
+func (m AgentsModel) loopLines(now time.Time, width int) []string {
+	w := m.watch
+	if w == nil {
+		w = &loopWatch{}
+	}
+	r := w.report
+	head := TitleStyle.Render("Loops")
+	if w.on || len(r.Running) > 0 || len(r.Queued) > 0 {
+		head += MutedStyle.Render(fmt.Sprintf(" (%d running · %d queued)", len(r.Running), len(r.Queued)))
+	}
+	lines := []string{head}
+	if w.err != "" {
+		lines = append(lines, errorLine(truncate("loops: "+w.err, width-2)))
+	}
+	if !w.on {
+		lines = append(lines, MutedStyle.Render(truncate("  Loops are off · gotodo setup or gotodo loops on", width)))
+	} else if len(r.Running)+len(r.Queued)+len(r.Recent) == 0 {
+		lines = append(lines, MutedStyle.Render(truncate("  no runs yet: moving a card into a looped column starts one", width)))
+	}
+
+	stageW := 0
+	recent := r.Recent[:min(len(r.Recent), loopRecentRows)]
+	for _, list := range [][]loops.RunRecord{r.Running, recent} {
+		for _, run := range list {
+			stageW = max(stageW, lipgloss.Width(run.Stage))
+		}
+	}
+	for _, q := range r.Queued {
+		stageW = max(stageW, lipgloss.Width(q.Stage))
+	}
+	stageW = min(stageW, 14)
+	stage := func(s string) string { return fmt.Sprintf("%-*s", stageW, truncate(s, stageW)) }
+
+	for _, run := range r.Running {
+		right := MutedStyle.Render(runAgent(run)+"  ") + loopStyle.Render(runDuration(runTook(run, now)))
+		lines = append(lines, m.loopRow(runMarker(run.Status)+" "+loopStyle.Render(stage(run.Stage)), run.TaskID, right, width))
+	}
+	for i, q := range r.Queued {
+		if i == loopQueuedRows {
+			lines = append(lines, MutedStyle.Render(fmt.Sprintf("    +%d more queued", len(r.Queued)-i)))
+			break
+		}
+		right := MutedStyle.Render("queued " + ago(max(now.Sub(q.QueuedAt), 0)))
+		lines = append(lines, m.loopRow(MutedStyle.Render("… "+stage(q.Stage)), q.TaskID, right, width))
+	}
+	for _, run := range recent {
+		end := run.Started
+		if run.Ended != nil {
+			end = *run.Ended
+		}
+		right := MutedStyle.Render(fmt.Sprintf("%s %s  %s", run.Status, end.In(now.Location()).Format("02/01 15:04"), runDuration(runTook(run, now))))
+		lines = append(lines, m.loopRow(runMarker(run.Status)+" "+MutedStyle.Render(stage(run.Stage)), run.TaskID, right, width))
+	}
+	return lines
+}
+
+// loopRow is one run: marker and stage, short ID and title, then right
+// (agent, status, times) flush right; the title gives way first.
+func (m AgentsModel) loopRow(lead, taskID, right string, width int) string {
+	title := "(deleted)"
+	if t, ok := m.board.TaskByID(taskID); ok {
+		title = t.Title
+	}
+	head := "  " + lead + "  " + MutedStyle.Render(shortTaskID(taskID)) + "  "
+	room := width - lipgloss.Width(head) - lipgloss.Width(right) - 2
+	line := head + truncate(title, max(room, 1))
+	if gap := width - lipgloss.Width(line) - lipgloss.Width(right); gap >= 2 {
+		line += strings.Repeat(" ", gap) + right
+	} else {
+		line += "  " + right
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
 // agentLines is an agent's heading row and its current tasks.

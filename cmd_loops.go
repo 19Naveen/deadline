@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -19,7 +22,7 @@ const loopsUsage = `usage: gotodo loops [status]
        gotodo loops on|off [-project]
        gotodo loops set <stage> -agent claude|codex|opencode [-model M] [-skill S] [-prompt P] [-permissions readonly|edits|full] [-enabled=false] [-project]
        gotodo loops unset <stage> [-project]
-       gotodo loops logs <id> [-stage S]
+       gotodo loops logs <id> [-stage S] [-f]   -f follows the newest log until its run ends
        gotodo loops stop <id>
        gotodo loops dispatch            start runs for new card moves and drain the queue now
        gotodo loops run <id> <stage>    (internal: what a dispatched loop executes)`
@@ -295,7 +298,8 @@ func runLoopsUnset(path string, args []string) error {
 func runLoopsLogs(path string, args []string) error {
 	fs := flag.NewFlagSet("loops logs", flag.ContinueOnError)
 	stage := fs.String("stage", "", "only this stage's runs")
-	id, help, err := coordIDArgs(fs, args, "usage: gotodo loops logs <id> [-stage S]")
+	follow := fs.Bool("f", false, "follow the newest log until its run ends")
+	id, help, err := coordIDArgs(fs, args, "usage: gotodo loops logs <id> [-stage S] [-f]")
 	if help || err != nil {
 		return err
 	}
@@ -311,6 +315,11 @@ func runLoopsLogs(path string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", shortID(t.ID), err)
 	}
+	if *follow {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return followLoopLog(ctx, path, rec, os.Stdout, followPoll)
+	}
 	f, err := os.Open(rec.Log)
 	if err != nil {
 		return err
@@ -318,6 +327,83 @@ func runLoopsLogs(path string, args []string) error {
 	defer f.Close()
 	_, err = io.Copy(os.Stdout, f)
 	return err
+}
+
+// followPoll is how often logs -f checks the log and the run.
+const followPoll = 500 * time.Millisecond
+
+// followLoopLog prints rec's log, then its new bytes as they arrive,
+// until the run is no longer running and the log has stopped growing, or
+// ctx ends (Ctrl+C). The runner records a run's end before writing its
+// last log line, so it waits for two quiet polls after the run ends.
+func followLoopLog(ctx context.Context, boardPath string, rec loops.RunRecord, out io.Writer, poll time.Duration) error {
+	var off int64
+	quiet := 0
+	for {
+		running, err := loopRunLive(boardPath, rec)
+		if err != nil {
+			return err
+		}
+		n, err := copyLogFrom(rec.Log, &off, out)
+		if err != nil {
+			return err
+		}
+		switch {
+		case running || n > 0:
+			quiet = 0
+		case quiet >= 1:
+			return nil
+		default:
+			quiet++
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(poll):
+		}
+	}
+}
+
+// loopRunLive reports whether rec is still a live run (Status marks a
+// run whose runner died as lost, so a crash ends the follow too).
+func loopRunLive(boardPath string, rec loops.RunRecord) (bool, error) {
+	r, err := loops.Status(boardPath)
+	if err != nil {
+		return false, err
+	}
+	for _, run := range r.Running {
+		if run.TaskID == rec.TaskID && run.Stage == rec.Stage && run.N == rec.N {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// copyLogFrom writes path's bytes from *off onward to out and advances
+// *off. A missing file (the run has not written yet) copies nothing; a
+// file that shrank is read again from the start.
+func copyLogFrom(path string, off *int64, out io.Writer) (int64, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if st.Size() < *off {
+		*off = 0
+	}
+	if _, err := f.Seek(*off, io.SeekStart); err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(out, f)
+	*off += n
+	return n, err
 }
 
 func runLoopsStop(path string, args []string) error {
