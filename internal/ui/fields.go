@@ -59,6 +59,22 @@ func cardClaim(t task.Task, now time.Time, budget int) string {
 	return claimStyle.Render("◆ " + truncate(t.ClaimedBy, budget-2))
 }
 
+// cardMarker is the agent marker beside a card's countdown: "⟳ loop:stage"
+// while a loop runs on the card (its claim is the same loop), else the
+// "◆ agent" claim.
+func (m BoardModel) cardMarker(t task.Task, budget int) string {
+	if run, ok := m.watch.running(t.ID); ok {
+		return cardLoop(run, budget)
+	}
+	return cardClaim(t, m.now(), budget)
+}
+
+// hasLoopLog reports whether t has a run log the L viewer can open.
+func (m BoardModel) hasLoopLog(t task.Task) bool {
+	run, ok := m.watch.latest(t.ID)
+	return ok && fileExists(run.Log)
+}
+
 // formatStamp is a date and time in the Singapore layout, DD/MM/YYYY HH:MM.
 func formatStamp(t time.Time) string { return t.Format("02/01/2006 15:04") }
 
@@ -123,6 +139,9 @@ func (m BoardModel) agentProps(t task.Task, width int) []string {
 			v += MutedStyle.Render("  " + until)
 		}
 		rows = append(rows, propRow("Claimed by", v, width))
+	}
+	if run, ok := m.watch.latest(t.ID); ok {
+		rows = append(rows, propRow("Loop", loopSummary(run, m.now()), width))
 	}
 	if t.PR != "" {
 		rows = append(rows, propRow("PR", truncate(t.PR, width-propKeyWidth), width))

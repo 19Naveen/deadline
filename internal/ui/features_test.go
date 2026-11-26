@@ -816,7 +816,7 @@ func TestHelpListsNewKeys(t *testing.T) {
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = m.Update(runes("?"))
 	out := stripANSI(m.View())
-	for _, want := range []string{"search", "undo the last change", "approval gate", "open attachment", "approve"} {
+	for _, want := range []string{"search", "undo the last change", "approval gate", "open document", "loop log", "agents scroll", "approve"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help is missing %q:\n%s", want, out)
 		}

@@ -32,6 +32,9 @@ type AppModel struct {
 	calendar  CalendarModel
 	agents    AgentsModel
 	store     *task.Board
+	// watch is the loop state the board and Agents page read; the app
+	// refreshes it on every refresh tick and after every save.
+	watch *loopWatch
 
 	page     page
 	showHelp bool
@@ -50,15 +53,25 @@ type AppModel struct {
 
 // NewApp builds the root model around a loaded board.
 func NewApp(b *task.Board) AppModel {
-	return AppModel{
+	w := readLoopWatch(b.Path())
+	m := AppModel{
 		board:     NewBoardModel(b),
 		analytics: NewAnalyticsModel(b),
 		archive:   NewArchiveModel(b),
 		calendar:  NewCalendarModel(b),
 		agents:    NewAgentsModel(b),
 		store:     b,
+		watch:     &w,
 		now:       time.Now,
 	}
+	m.board.watch, m.agents.watch = m.watch, m.watch
+	return m
+}
+
+// refreshLoops re-reads the loop state (a few small files) for every page.
+func (m *AppModel) refreshLoops() {
+	*m.watch = readLoopWatch(m.store.Path())
+	m.board.refreshLog()
 }
 
 // archiveTickMsg fires periodically so a long-running session still tidies
@@ -116,6 +129,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.noteBoardStat()
+		m.refreshLoops()
 		return m, nil
 
 	case archiveTickMsg:
@@ -149,6 +163,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		// Loop runs change without a board write (logs grow, runs end).
+		m.refreshLoops()
 		return m, cmd
 
 	case tea.KeyMsg:
@@ -203,6 +219,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case pageCalendar:
 			var cmd tea.Cmd
 			m.calendar, cmd = m.calendar.Update(msg)
+			return m, cmd
+		case pageAgents:
+			var cmd tea.Cmd
+			m.agents, cmd = m.agents.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -310,10 +330,10 @@ func (m AppModel) renderHelp() string {
 		{"pickers", "type to filter, ↑/↓ enter"},
 		{"enter", "save, esc cancel"},
 	}) + "\n\n" + helpSection("Open task", [][2]string{
-		{"o", "open attachment or note"},
+		{"o L", "open document / loop log"},
 		{"v y", "verify & ship / approve"},
 	}) + "\n\n" + helpSection("Pages", [][2]string{
-		{"archive", "j/k select"},
+		{"j/k", "archive pick, agents scroll"},
 		{"calendar", "h/l month, t today"},
 		{"? q", "this help, quit"},
 	})
