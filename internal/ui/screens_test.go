@@ -65,7 +65,7 @@ func TestEveryScreenFitsTerminal(t *testing.T) {
 		key(runes("f"))
 		check("family")
 		key(runes("f"))
-		for _, page := range []string{"analytics", "archive", "calendar"} {
+		for _, page := range []string{"analytics", "archive", "calendar", "agents"} {
 			key(tea.KeyMsg{Type: tea.KeyTab})
 			check(page)
 		}

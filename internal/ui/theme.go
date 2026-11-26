@@ -88,6 +88,11 @@ var ErrorStyle = lipgloss.NewStyle().Bold(true).Foreground(colBlocked)
 
 func errorLine(msg string) string { return ErrorStyle.Render("! " + msg) }
 
+// noticeLine is a one-shot confirmation in the footer (undone, approved).
+func noticeLine(msg string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(colDone).Render(msg)
+}
+
 // statusTag renders a transient board state (Moving, Family) in the footer,
 // amber like the grabbed card.
 func statusTag(s string) string { return lipgloss.NewStyle().Bold(true).Foreground(colDoing).Render(s) }

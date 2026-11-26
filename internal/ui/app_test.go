@@ -268,7 +268,7 @@ func TestTabCyclesEveryPage(t *testing.T) {
 	if a.page != pageBoard {
 		t.Fatalf("page = %v, want pageBoard", a.page)
 	}
-	for _, want := range []page{pageAnalytics, pageArchive, pageCalendar, pageBoard} {
+	for _, want := range []page{pageAnalytics, pageArchive, pageCalendar, pageAgents, pageBoard} {
 		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyTab})
 		a = m.(AppModel)
 		if a.page != want {
