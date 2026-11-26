@@ -4,6 +4,8 @@ package task
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -58,7 +60,26 @@ type Transition struct {
 	From Status    `json:"from"`
 	To   Status    `json:"to"`
 	At   time.Time `json:"at"`
+	// Agent is who made the move: the GOTODO_AGENT name for an agent, ""
+	// for a human (the TUI, or the CLI without GOTODO_AGENT).
+	Agent string `json:"agent,omitempty"`
 }
+
+// Priority orders work: higher is more urgent. Zero means unset.
+type Priority int
+
+const (
+	PriorityNone Priority = iota
+	PriorityLow
+	PriorityMedium
+	PriorityHigh
+)
+
+// AgentEnv names the environment variable an agent sets to identify itself.
+const AgentEnv = "GOTODO_AGENT"
+
+// AgentFromEnv is the acting agent's name, or "" for a human.
+func AgentFromEnv() string { return strings.TrimSpace(os.Getenv(AgentEnv)) }
 
 // Task is one card on the board.
 type Task struct {
@@ -73,6 +94,13 @@ type Task struct {
 	Status       Status       `json:"status"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
+	Priority     Priority     `json:"priority,omitempty"`
+	Labels       []string     `json:"labels,omitempty"`
+	BlockedBy    []string     `json:"blocked_by,omitempty"` // full IDs of tasks that must ship first
+	ClaimedBy    string       `json:"claimed_by,omitempty"` // agent holding the task
+	ClaimUntil   *time.Time   `json:"claim_until,omitempty"`
+	PR           string       `json:"pr,omitempty"` // linked pull request URL or number
+	LastAgent    string       `json:"last_agent,omitempty"`
 	Archived     bool         `json:"archived,omitempty"`
 	ArchivedAt   *time.Time   `json:"archived_at,omitempty"`
 	History      []Transition `json:"history,omitempty"`

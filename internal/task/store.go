@@ -152,6 +152,10 @@ func (b *Board) mergeDisk() error {
 		return err
 	}
 	b.Tasks = merged
+	// Board settings: another writer's change wins unless we set ours.
+	if !b.settingsChanged {
+		b.WIPLimits, b.RequireApproval = disk.WIPLimits, disk.RequireApproval
+	}
 	if changed {
 		b.dirty = true
 	}
@@ -203,6 +207,7 @@ func (b *Board) Save() error {
 		return fmt.Errorf("rename temp: %w", err)
 	}
 	b.dirty = false
+	b.settingsChanged = false
 	b.snapshot()
 	return nil
 }

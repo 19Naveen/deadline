@@ -142,7 +142,7 @@ func runBoard(path string, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (usage: gotodo board)", fs.Arg(0))
 	}
-	b, err := task.Load(path)
+	b, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func runInit(args []string) error {
 		return nil
 	}
 	path := filepath.Join(cwd, projectDirName, projectBoardFile)
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func runAdd(path string, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (%s)", fs.Arg(0), addUsage)
 	}
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func runList(path string, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -464,7 +464,7 @@ func runShow(path string, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: gotodo show <id>")
 	}
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -514,7 +514,7 @@ func runMove(path string, args []string) error {
 	if len(args) != 2 {
 		return errors.New("usage: gotodo move <id> <status>")
 	}
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -582,7 +582,7 @@ func runEdit(path string, args []string) error {
 		return errors.New(editUsage)
 	}
 
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -648,7 +648,7 @@ func runDelete(path string, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: gotodo delete <id>")
 	}
-	board, err := task.Load(path)
+	board, err := loadBoard(path)
 	if err != nil {
 		return err
 	}
@@ -724,4 +724,16 @@ func shortID(id string) string {
 		return id[:shortLen]
 	}
 	return id
+}
+
+// loadBoard loads a board for a headless command, acting as the agent named
+// by GOTODO_AGENT (or a human when unset). The TUI loads with task.Load and
+// always acts as a human.
+func loadBoard(path string) (*task.Board, error) {
+	b, err := task.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	b.Actor = task.AgentFromEnv()
+	return b, nil
 }

@@ -18,9 +18,19 @@ type Board struct {
 	// Columns is the left-to-right column order. Empty (older files) means
 	// the personal preset; use Statuses rather than reading it directly.
 	Columns []Status `json:"columns,omitempty"`
+	// WIPLimits caps cards per column; a missing or zero entry is no limit.
+	WIPLimits map[Status]int `json:"wip_limits,omitempty"`
+	// RequireApproval stops agents moving cards into the terminal column;
+	// only a human (Actor == "") may ship.
+	RequireApproval bool `json:"require_approval,omitempty"`
 
-	path  string // where Save writes
-	dirty bool   // unsaved mutations pending
+	// Actor is who is acting this session: an agent name, or "" for a human.
+	// Move records it on each transition and on Task.LastAgent.
+	Actor string `json:"-"`
+
+	settingsChanged bool   // WIPLimits/RequireApproval set this session
+	path            string // where Save writes
+	dirty           bool   // unsaved mutations pending
 	// deleted holds tombstones: IDs removed by Delete this session, so
 	// mergeDisk never re-appends them from the disk copy at Save time.
 	deleted map[string]struct{}
@@ -57,6 +67,25 @@ func (b *Board) ColumnIndex(s Status) int {
 
 // HasStatus reports whether s is a column on this board.
 func (b *Board) HasStatus(s Status) bool { return b.ColumnIndex(s) >= 0 }
+
+// SetWIPLimit caps a column; zero or less removes the cap.
+func (b *Board) SetWIPLimit(s Status, n int) {
+	if b.WIPLimits == nil {
+		b.WIPLimits = make(map[Status]int)
+	}
+	if n <= 0 {
+		delete(b.WIPLimits, s)
+	} else {
+		b.WIPLimits[s] = n
+	}
+	b.settingsChanged, b.dirty = true, true
+}
+
+// SetRequireApproval turns the human ship gate on or off.
+func (b *Board) SetRequireApproval(on bool) {
+	b.RequireApproval = on
+	b.settingsChanged, b.dirty = true, true
+}
 
 // SetColumns replaces the column layout and marks the board dirty, so Save
 // writes it (direct assignment would bypass dirty tracking).
@@ -212,7 +241,11 @@ func (b *Board) Move(id string, to Status, now time.Time) error {
 			return fmt.Errorf("finish all subtasks first (%d/%d complete)", done, total)
 		}
 	}
-	t.History = append(t.History, Transition{From: t.Status, To: to, At: now})
+	if to == b.DoneStatus() && b.RequireApproval && b.Actor != "" {
+		return errors.New("this board requires a human to approve shipping; move it in the TUI")
+	}
+	t.History = append(t.History, Transition{From: t.Status, To: to, At: now, Agent: b.Actor})
+	t.LastAgent = b.Actor
 	t.Status = to
 	t.UpdatedAt = now
 	b.markChanged(id)
