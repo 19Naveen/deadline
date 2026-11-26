@@ -554,6 +554,18 @@ IDs accept any unique prefix. Failures (unknown status, ambiguous ID, bad date,
 the approval gate) come back as tool results with `isError: true` and a
 readable message, so the model can fix the call.
 
+**You don't need to set anything up.** `install.sh` runs `gotodo setup`,
+which registers the server with every agent it finds: Claude Code (user
+scope, via `claude mcp add`), Codex (a marked block in
+`~/.codex/config.toml`) and OpenCode (merged into
+`~/.config/opencode/opencode.json`), each with its own `GOTODO_AGENT`. Each
+agent then starts `gotodo mcp` itself in every session. Run `gotodo setup`
+again after installing a new agent; it is safe to repeat, never touches your
+other settings, and leaves a config it cannot parse alone. `gotodo setup
+-remove` (also run by `--uninstall`) takes it out again.
+
+The manual equivalents, if you prefer to wire it yourself:
+
 **Claude Code:**
 
 ```bash

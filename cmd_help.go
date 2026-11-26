@@ -69,8 +69,14 @@ var helpGroups = []struct {
 		{name: "claim", usage: "gotodo claim <id> [-ttl 2h]", summary: "claim a task so other agents skip it (needs GOTODO_AGENT)"},
 		{name: "release", usage: "gotodo release <id>", summary: "release a claim"},
 		{name: "context", usage: "gotodo context <id>", summary: "print everything needed to resume a task, incl. working notes"},
-		{name: "mcp", usage: "gotodo mcp", summary: "run the MCP server on stdio for coding agents",
-			examples: []string{"claude mcp add gotodo -- gotodo mcp"}},
+		{name: "mcp", usage: "gotodo mcp", summary: "run the MCP server on stdio (agents start it themselves)",
+			details: []string{"You never run this by hand: gotodo setup registers it and each agent starts it per session."}},
+		{name: "setup", usage: "gotodo setup [-remove] [-dry-run]", summary: "register the MCP server with Claude Code, Codex and OpenCode",
+			details: []string{
+				"Runs automatically from install.sh. Safe to repeat; skips agents that are not installed.",
+				"Claude Code: claude mcp add -s user. Codex: a marked block in ~/.codex/config.toml.",
+				"OpenCode: merges mcp.gotodo into ~/.config/opencode/opencode.json (left alone if it can't be parsed).",
+			}},
 	}},
 	{"Reports", []helpEntry{
 		{name: "standup", usage: "gotodo standup [-since 24h|7d] [-format text|markdown]", summary: "summarise recent activity"},

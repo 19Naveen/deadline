@@ -317,6 +317,10 @@ ensure_path_in_rc() {
 # this script added. Boards are data, not installation, so they stay:
 # ~/.config/gotodo and ./.deadline in projects survive for reinstalls.
 uninstall_gotodo() {
+  # Unregister the MCP server from agents while the binary still exists.
+  if [ -x "$INSTALL_DIR/$BINARY" ]; then
+    "$INSTALL_DIR/$BINARY" setup -remove || warn "Could not unregister the gotodo MCP server from every agent."
+  fi
   rm -f "$INSTALL_DIR/$BINARY"
   info "Removed $INSTALL_DIR/$BINARY (if present)."
   local dest rc tmp
@@ -447,6 +451,10 @@ else
 fi
 install_skill "$workdir/src"
 install_global_instructions "$workdir/src"
+# Register the MCP server with Claude Code, Codex and OpenCode so agents get
+# gotodo's tools without any manual config. Safe to repeat.
+info "Registering the gotodo MCP server with installed agents…"
+"$INSTALL_DIR/$BINARY" setup || warn "MCP setup did not finish for every agent; run 'gotodo setup' later."
 trap - EXIT
 rm -rf "$workdir"
 

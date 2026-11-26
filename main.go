@@ -107,6 +107,9 @@ func run(argv []string) error {
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help") {
 		return runHelp(args[1:])
 	}
+	if len(args) > 0 && args[0] == "setup" {
+		return runSetup(args[1:])
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInit(args[1:])
 	}
