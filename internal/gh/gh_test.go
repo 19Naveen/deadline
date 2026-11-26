@@ -220,3 +220,18 @@ func TestCheckAuth(t *testing.T) {
 		t.Fatalf("missing gh = %v", err)
 	}
 }
+
+// Real runs report in the past tense; dry runs say "would".
+func TestActionStringTense(t *testing.T) {
+	a := Action{Kind: ActionShipped, TaskID: "abcdef0123456789", Title: "T", PR: "42", Detail: "shipped"}
+	if got := a.String(false); !strings.HasPrefix(got, "moved abcdef01 T → shipped") {
+		t.Errorf("real run = %q", got)
+	}
+	if got := a.String(true); !strings.HasPrefix(got, "would move abcdef01") {
+		t.Errorf("dry run = %q", got)
+	}
+	n := Action{Kind: ActionNoted, TaskID: "abcdef01", Title: "T", PR: "42"}
+	if got := n.String(false); !strings.HasPrefix(got, "noted abcdef01") {
+		t.Errorf("note = %q", got)
+	}
+}

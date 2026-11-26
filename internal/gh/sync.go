@@ -39,21 +39,24 @@ func (a Action) String(dryRun bool) string {
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	would := ""
-	if dryRun {
-		would = "would "
+	// Dry runs say what would happen; real runs report what did.
+	verb := func(base, past string) string {
+		if dryRun {
+			return "would " + base
+		}
+		return past
 	}
 	switch a.Kind {
 	case ActionShipped:
-		return fmt.Sprintf("%smove %s %s → %s (PR %s merged)", would, id, a.Title, a.Detail, a.PR)
+		return fmt.Sprintf("%s %s %s → %s (PR %s merged)", verb("move", "moved"), id, a.Title, a.Detail, a.PR)
 	case ActionAwaiting:
 		return fmt.Sprintf("%s %s: PR %s merged, awaits human approval to ship (move it in the TUI)", id, a.Title, a.PR)
 	case ActionRefused:
 		return fmt.Sprintf("%s %s: PR %s merged, but cannot ship: %s", id, a.Title, a.PR, a.Detail)
 	case ActionBlocked:
-		return fmt.Sprintf("%smove %s %s → %s (CI failing on PR %s)", would, id, a.Title, a.Detail, a.PR)
+		return fmt.Sprintf("%s %s %s → %s (CI failing on PR %s)", verb("move", "moved"), id, a.Title, a.Detail, a.PR)
 	case ActionNoted:
-		return fmt.Sprintf("%snote %s %s: CI failing on PR %s", would, id, a.Title, a.PR)
+		return fmt.Sprintf("%s %s %s: CI failing on PR %s", verb("note", "noted"), id, a.Title, a.PR)
 	default:
 		return fmt.Sprintf("%s %s: cannot check PR %s: %s", id, a.Title, a.PR, a.Detail)
 	}
