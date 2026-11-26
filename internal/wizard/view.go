@@ -176,11 +176,11 @@ func (m Model) hints() []string {
 		it, _ := m.packItem()
 		switch it.kind {
 		case itemAdd:
-			return []string{keyHint("↑↓", "Move"), keyHint("enter", "Add a pack"), keyHint("esc", "Back")}
+			return []string{keyHint("↑↓", "Move"), keyHint("enter", "Add a skill"), keyHint("esc", "Back")}
 		case itemCustom:
-			return []string{keyHint("↑↓", "Move"), keyHint("space", "Toggle"), keyHint("d", "Remove"), keyHint("enter", "Next"), keyHint("esc", "Back")}
+			return []string{keyHint("↑↓", "Move"), keyHint("d", "Remove"), keyHint("enter", "Next"), keyHint("esc", "Back")}
 		}
-		return []string{keyHint("↑↓", "Move"), keyHint("space", "Toggle"), keyHint("enter", "Next"), keyHint("esc", "Back")}
+		return []string{keyHint("↑↓", "Choose"), keyHint("enter", "Next"), keyHint("esc", "Back")}
 	case scrLoops, scrExisting:
 		return []string{keyHint("↑↓", "Choose"), keyHint("enter", "Next"), keyHint("esc", "Back")}
 	case scrStages:
@@ -294,86 +294,73 @@ func radioStyle(on bool) (lipgloss.Style, string) {
 	return mutedStyle, "○"
 }
 
-// packPill is one built-in pack cell's tag.
-func (m Model) packPill(c packCell) string {
-	switch c.State {
-	case packInstalled:
-		return m.pill("✓ installed", colGreen)
-	case packNeedsNpx:
-		return m.pill("needs npx", colAmber)
-	}
-	if m.checked[cellKey(c.Pack, c.Agent)] {
-		return m.pill("will install", colAccent)
-	}
-	return m.pill("not installed", colBorder)
-}
-
 func (m Model) packsView(w int) (string, string, []string) {
 	cur, _ := m.packItem()
-	const agentW, cellW = 10, 18
-	b := []string{headStyle.Render(pad("", 2+agentW) + pad("  PSTACK", cellW) + pad("  MATTPOCOCK", cellW) + "OTHER SKILLS")}
-	needsNpx := false
-	for _, a := range m.detected {
-		focusRow := cur.kind == itemCell && m.cells[cur.cell].Agent == a
-		r := m.newRow(focusRow)
-		r.cell(boldStyle, a, agentW)
-		for i, c := range m.cells {
-			if c.Agent != a {
-				continue
+	var b []string
+	missing := map[string][]string{} // agent → packs Recommended would add
+	for _, i := range m.offered() {
+		c := m.cells[i]
+		missing[c.Agent] = append(missing[c.Agent], c.Pack)
+	}
+	if len(missing) > 0 {
+		var what []string
+		for _, a := range m.detected {
+			if ps := missing[a]; len(ps) > 0 {
+				what = append(what, a+": "+strings.Join(ps, " + "))
 			}
-			needsNpx = needsNpx || c.State == packNeedsNpx
-			mark := "  "
-			if focusRow && cur.cell == i {
-				mark = "▸ "
-			}
-			r.add(accentStyle, mark).raw(m.packPill(c), cellW-2)
 		}
-		other := otherSkills(m.skills[a])
-		if len(other) == 0 {
-			r.add(mutedStyle, "none")
-		} else {
-			n := fmt.Sprint(len(other))
-			r.add(boldStyle, n).add(mutedStyle, " · "+trunc(strings.Join(other, ", "), w-2-agentW-2*cellW-len(n)-3))
-
+		opt := func(kind int, on bool, label, detail string) string {
+			return m.newRow(cur.kind == kind).add(radioStyle(on)).space(1).
+				cell(boldStyle, label, 22).add(mutedStyle, trunc(detail, w-30)).line(w)
 		}
-		b = append(b, r.line(w))
+		b = append(b,
+			opt(itemRecommend, m.recommend, "Install recommended", strings.Join(what, " · ")),
+			opt(itemSkip, !m.recommend, "Skip", "use the skills you already have"))
+	} else {
+		b = append(b, "  "+okStyle.Render("✓")+" "+textStyle.Render("Recommended skills are installed for every agent."))
 	}
 	for ci, c := range m.customs {
-		focusRow := cur.kind == itemCustom && cur.custom == ci
-		r := m.newRow(focusRow)
-		r.add(accentStyle, "◆ ").cell(boldStyle, c.Label, 22)
-		for _, a := range m.detected {
-			mark := " "
-			if focusRow && cur.agent == a {
-				mark = "▸"
-			}
-			st := mutedStyle
-			if c.Agents[a] {
-				st = textStyle
-			}
-			r.add(accentStyle, mark).add(checkStyle(c.Agents[a])).space(1).cell(st, a, 10)
-		}
-		b = append(b, r.line(w))
+		b = append(b, m.newRow(cur.kind == itemCustom && cur.custom == ci).add(accentStyle, "◆ ").
+			cell(boldStyle, trunc(c.Label, 26), 28).add(m.pillStyle("will install", colAccent)).line(w))
 	}
 	switch {
 	case m.src != nil:
 		b = append(b, "  "+m.src.view(w-2))
 	case !m.npx:
-		b = append(b, m.newRow(cur.kind == itemAdd).add(mutedStyle, "+ add a skill pack…  needs npx (Node.js)").line(w))
+		b = append(b, m.newRow(cur.kind == itemAdd).add(mutedStyle, "+ Add my own skill…  needs npx (Node.js)").line(w))
 	default:
-		b = append(b, m.newRow(cur.kind == itemAdd).add(accentStyle, "+ add a skill pack…").
+		b = append(b, m.newRow(cur.kind == itemAdd).add(accentStyle, "+ Add my own skill…").
 			add(mutedStyle, "  GitHub owner/repo, git URL or a folder").line(w))
 	}
 	if m.srcErr != "" {
 		b = append(b, "  "+errorLine(m.srcErr))
 	}
-	b = append(b, "",
-		mutedStyle.Render("pstack: michael-denyer/pstack-claude · mattpocock: mattpocock/skills"),
-		mutedStyle.Render("Codex + OpenCode packs are one shared install in ~/.agents/skills."))
-	if needsNpx {
-		b = append(b, amberStyle.Render("! npx not found: install Node.js, then rerun gotodo setup for mattpocock."))
+	for _, c := range m.cells {
+		if c.State == packNeedsNpx {
+			b = append(b, "  "+amberStyle.Render(trunc("! npx not found: install Node.js, then rerun gotodo setup for mattpocock", w-2)))
+			break
+		}
 	}
-	return titleStyle.Render("Skill packs"), "Loops give each card a skill. Packs already present are not offered.", b
+	// What each agent has now, compactly.
+	b = append(b, "", section("Already on this machine"))
+	for _, a := range m.detected {
+		r := m.newRow(false).cell(boldStyle, a, 10)
+		for _, c := range m.cells {
+			if c.Agent != a {
+				continue
+			}
+			if c.State == packInstalled {
+				r.add(okStyle, "✓ "+c.Pack).space(2)
+			} else {
+				r.add(mutedStyle, "· "+c.Pack).space(2)
+			}
+		}
+		if other := otherSkills(m.skills[a]); len(other) > 0 {
+			r.add(mutedStyle, trunc(fmt.Sprintf("+ %d own: %s", len(other), strings.Join(other, ", ")), w-44))
+		}
+		b = append(b, r.line(w))
+	}
+	return titleStyle.Render("Skills"), "Install the recommended skills, skip, or add your own.", b
 }
 
 func (m Model) existingView(w int) (string, string, []string) {
@@ -722,4 +709,9 @@ func (m Model) doneView(w, room int) (string, string, []string) {
 		title = errorStyle.Render(fmt.Sprintf("✗ Set up with %d failed step(s)", failed))
 	}
 	return title, "Done · " + m.appliedAt.Format("02/01/2006 15:04") + " · restart open agent sessions to load changes", b
+}
+
+// pillStyle returns a pill as a (style, text) pair for row builders.
+func (m Model) pillStyle(text string, c lipgloss.AdaptiveColor) (lipgloss.Style, string) {
+	return lipgloss.NewStyle(), m.pill(text, c)
 }

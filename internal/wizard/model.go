@@ -37,7 +37,7 @@ var crumbs = []struct {
 	{"Welcome", []screen{scrWelcome}},
 	{"MCP", []screen{scrMCP}},
 	{"Loops", []screen{scrLoops}},
-	{"Packs", []screen{scrPacks}},
+	{"Skills", []screen{scrPacks}},
 	{"Stages", []screen{scrExisting, scrStages}},
 	{"Summary", []screen{scrSummary}},
 }
@@ -66,17 +66,16 @@ type packCell struct {
 	State       packState
 }
 
-// packItem is one cursor stop on the packs screen: a missing built-in pack
-// cell, one agent of a custom pack, or the add row.
+// packItem is one cursor stop on the packs screen: the Recommended or Skip
+// choice, an added skill source, or the add row.
 type packItem struct {
 	kind   int
-	cell   int    // itemCell: index into cells
-	custom int    // itemCustom: index into customs
-	agent  string // itemCustom
+	custom int // itemCustom: index into customs
 }
 
 const (
-	itemCell = iota
+	itemRecommend = iota
+	itemSkip
 	itemCustom
 	itemAdd
 )
@@ -108,11 +107,12 @@ type Model struct {
 	loops       bool
 	loopsPreset bool
 
-	cells   []packCell
-	checked map[string]bool
-	customs []customPack
-	src     *editor // pack source input, open on the packs screen
-	srcErr  string
+	cells     []packCell
+	checked   map[string]bool
+	recommend bool // install the recommended packs wherever they are missing
+	customs   []customPack
+	src       *editor // pack source input, open on the packs screen
+	srcErr    string
 
 	existing *existingConfig
 	replace  bool
@@ -171,6 +171,7 @@ func New(d Deps, o Options) Model {
 			m.cells = append(m.cells, c)
 		}
 	}
+	m.setRecommend(len(m.offered()) > 0)
 	if o.Loops != nil {
 		m.loops, m.loopsPreset = *o.Loops, true
 	}
@@ -297,9 +298,15 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		return m, nil
 	case "enter":
-		if m.scr == scrPacks && m.onAddRow() {
-			m.openSource()
-			return m, nil
+		if m.scr == scrPacks {
+			it, _ := m.packItem()
+			switch it.kind {
+			case itemAdd:
+				m.openSource()
+				return m, nil
+			case itemRecommend, itemSkip:
+				m.setRecommend(it.kind == itemRecommend)
+			}
 		}
 		return m.next()
 	}
@@ -352,7 +359,8 @@ func (m *Model) list(k string, n int, toggle func(int)) {
 	m.cur[m.scr] = i
 }
 
-// offered are the pack cells a person can tick: missing ones.
+// offered are the pack cells the Recommended choice would install: packs
+// an agent lacks and can install.
 func (m Model) offered() []int {
 	var out []int
 	for i, c := range m.cells {
@@ -363,16 +371,26 @@ func (m Model) offered() []int {
 	return out
 }
 
-// packItems are the packs screen's cursor stops in display order.
+// setRecommend chooses Install recommended (every missing pack) or Skip.
+func (m *Model) setRecommend(on bool) {
+	m.recommend = on && len(m.offered()) > 0
+	m.checked = map[string]bool{}
+	if m.recommend {
+		for _, i := range m.offered() {
+			m.checked[cellKey(m.cells[i].Pack, m.cells[i].Agent)] = true
+		}
+	}
+}
+
+// packItems are the packs screen's cursor stops: Recommended and Skip (only
+// when something is missing), each added source, then the add row.
 func (m Model) packItems() []packItem {
 	var items []packItem
-	for _, i := range m.offered() {
-		items = append(items, packItem{kind: itemCell, cell: i})
+	if len(m.offered()) > 0 {
+		items = append(items, packItem{kind: itemRecommend}, packItem{kind: itemSkip})
 	}
 	for ci := range m.customs {
-		for _, a := range m.detected {
-			items = append(items, packItem{kind: itemCustom, custom: ci, agent: a})
-		}
+		items = append(items, packItem{kind: itemCustom, custom: ci})
 	}
 	return append(items, packItem{kind: itemAdd})
 }
@@ -392,39 +410,10 @@ func (m Model) onAddRow() bool {
 
 func (m *Model) togglePackItem(it packItem) {
 	switch it.kind {
-	case itemCell:
-		m.togglePack(it.cell)
-	case itemCustom:
-		c := m.customs[it.custom]
-		on := !c.Agents[it.agent]
-		agents := map[string]bool{}
-		for a, v := range c.Agents {
-			agents[a] = v
-		}
-		agents[it.agent] = on
-		if sharedAgents[it.agent] { // one shared install covers both
-			for _, a := range m.detected {
-				if sharedAgents[a] {
-					agents[a] = on
-				}
-			}
-		}
-		m.customs = append([]customPack(nil), m.customs...)
-		m.customs[it.custom].Agents = agents
+	case itemRecommend, itemSkip:
+		m.setRecommend(it.kind == itemRecommend)
 	case itemAdd:
 		m.openSource()
-	}
-}
-
-// togglePack flips one cell; shared mattpocock cells move together since
-// one install covers both agents.
-func (m *Model) togglePack(i int) {
-	c := m.cells[i]
-	on := !m.checked[cellKey(c.Pack, c.Agent)]
-	for _, o := range m.cells {
-		if o == c || (isShared(c.Pack, c.Agent) && o.Pack == c.Pack && isShared(o.Pack, o.Agent) && o.State == packMissing) {
-			m.checked[cellKey(o.Pack, o.Agent)] = on
-		}
 	}
 }
 

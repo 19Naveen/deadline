@@ -158,9 +158,12 @@ func TestNavigatesEveryScreen(t *testing.T) {
 	if m.scr != scrPacks || !m.loops {
 		t.Fatalf("Loops yes → %v", m.scr)
 	}
-	m = press(t, m, "enter")
-	if m.scr != scrStages {
-		t.Fatalf("Packs → %v, want Stages (no existing config)", m.scr)
+	if !m.recommend || m.cur[scrPacks] != 0 {
+		t.Fatal("Install recommended should be the default when packs are missing")
+	}
+	m = press(t, m, "down", "enter") // Skip
+	if m.scr != scrStages || m.recommend || len(m.checked) != 0 {
+		t.Fatalf("Skip → %v recommend %v checked %v, want Stages with nothing chosen", m.scr, m.recommend, m.checked)
 	}
 	// Nothing installed: the enabled stages have no skill, so Next is refused.
 	m = press(t, m, "enter")
@@ -204,7 +207,7 @@ func TestNavigatesEveryScreen(t *testing.T) {
 		t.Fatalf("written stages = %+v", c.Stages)
 	}
 	if len(f.rec.packs) != 0 {
-		t.Fatalf("no pack was ticked, runner got %v", f.rec.packs)
+		t.Fatalf("Skip was chosen, runner got %v", f.rec.packs)
 	}
 	if rep := strings.Join(m.Report(), "\n"); !strings.Contains(rep, "loops.json:") || !strings.Contains(rep, "Restart") {
 		t.Fatalf("report = %s", rep)
@@ -295,13 +298,18 @@ func TestDefaultRows(t *testing.T) {
 func TestDefaultsCountChosenPacks(t *testing.T) {
 	f := newFixture(t, []string{"claude"}, map[string][]string{}, true)
 	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
-	// claude row: pstack then mattpocock; tick pstack only.
-	m = press(t, m, " ", "enter")
+	// Install recommended chooses pstack and mattpocock for claude.
+	m = press(t, m, "enter")
 	if m.scr != scrStages {
 		t.Fatalf("→ %v", m.scr)
 	}
-	if m.rows[1].Skill != "poteto-mode" || m.rows[2].Skill != "poteto-mode" {
-		t.Fatalf("with pstack chosen: indev %q review %q", m.rows[1].Skill, m.rows[2].Skill)
+	if m.rows[1].Skill != "poteto-mode" || m.rows[2].Skill != "code-review" {
+		t.Fatalf("with recommended chosen: indev %q review %q", m.rows[1].Skill, m.rows[2].Skill)
+	}
+	// Back to Packs, Skip: nothing chosen, so no skill defaults.
+	m = press(t, m, "esc", "down", "enter")
+	if m.scr != scrStages || m.rows[1].Skill != "" || m.rows[2].Skill != "" {
+		t.Fatalf("with Skip: %v indev %q review %q", m.scr, m.rows[1].Skill, m.rows[2].Skill)
 	}
 }
 
@@ -342,11 +350,22 @@ func TestPacksOfferedOnlyWhenMissing(t *testing.T) {
 	}
 	m = press(t, m, "enter", "enter", "down", "enter")
 	v := m.View()
-	if !strings.Contains(v, "one shared install in ~/.agents/skills") {
-		t.Error("packs screen should explain the shared mattpocock install")
+	if !strings.Contains(v, "Install recommended") || !strings.Contains(v, "claude: mattpocock · codex: pstack") || !strings.Contains(v, "Skip") {
+		t.Errorf("Install recommended should name what it adds:\n%s", v)
 	}
-	if strings.Count(v, "✓ installed") != 4 {
-		t.Errorf("expected 4 installed cells:\n%s", v)
+	if n := strings.Count(v, "✓ pstack") + strings.Count(v, "✓ mattpocock"); n != 4 {
+		t.Errorf("expected 4 installed packs, got %d:\n%s", n, v)
+	}
+
+	// Nothing missing: no choice to make, just the add row.
+	f = newFixture(t, all3(), map[string][]string{
+		"claude": {"poteto-mode", "grilling"}, "codex": {"poteto-mode", "grilling"}, "opencode": {"poteto-mode", "grilling"},
+	}, true)
+	m = press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
+	v = m.View()
+	if m.recommend || len(m.packItems()) != 1 || !m.onAddRow() || strings.Contains(v, "Install recommended") ||
+		!strings.Contains(v, "Recommended skills are installed for every agent.") {
+		t.Errorf("nothing missing should hide Recommend/Skip:\n%s", v)
 	}
 }
 
@@ -359,20 +378,34 @@ func TestNpxMissingMarksSharedPack(t *testing.T) {
 		}
 	}
 	m = press(t, m, "enter", "enter", "down", "enter")
-	if v := m.View(); !strings.Contains(v, "needs npx") || !strings.Contains(v, "install Node.js") {
+	if v := m.View(); !strings.Contains(v, "needs npx") || !strings.Contains(v, "! npx not found: install Node.js") {
 		t.Fatalf("packs screen should flag npx:\n%s", v)
+	}
+	// Install recommended still runs, without the shared npx install.
+	if !m.recommend || m.checked["mattpocock/codex"] || m.checked["mattpocock/opencode"] {
+		t.Fatalf("recommended must leave the npx pack out: %v", m.checked)
+	}
+	m = press(t, m, "enter", "enter", "enter")
+	if !m.finished {
+		t.Fatalf("not finished on %v (err %q)", m.scr, m.errMsg)
+	}
+	for _, c := range f.rec.packs {
+		if c.Argv[0] == "npx" {
+			t.Errorf("npx is missing, yet ran %v", c.Argv)
+		}
+	}
+	if len(f.rec.packs) == 0 {
+		t.Error("the packs that need no npx should still install")
 	}
 }
 
 func TestRunnerArgvPerPack(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{}, true)
 	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
-	// Offered order: claude pstack, claude mattpocock, codex pstack, codex
-	// mattpocock, opencode pstack, opencode mattpocock. Ticking codex
-	// mattpocock ticks opencode's too: one shared install.
-	m = press(t, m, " ", "down", " ", "down", " ", "down", " ", "down", " ")
-	if !m.checked["mattpocock/opencode"] {
-		t.Fatal("shared mattpocock cells should toggle together")
+	// Install recommended is the default when anything is missing; it
+	// covers every missing pack, with one shared mattpocock install.
+	if !m.recommend || !m.checked["mattpocock/opencode"] || !m.checked["pstack/claude"] {
+		t.Fatalf("recommended should be chosen by default: %v %v", m.recommend, m.checked)
 	}
 	m = press(t, m, "enter", "enter", "enter")
 	if !m.finished {
@@ -426,7 +459,7 @@ func TestPackFailureDoesNotAbort(t *testing.T) {
 	f := newFixture(t, []string{"claude"}, map[string][]string{}, true)
 	f.rec.fail["claude plugin install pstack@pstack-claude"] = "Error: network down"
 	f.rec.fail["claude plugin marketplace add michael-denyer/pstack-claude"] = "Marketplace already installed"
-	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", " ", "down", " ", "enter")
+	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", "enter") // Install recommended
 	m = press(t, m, "enter", "enter")
 	if !m.finished {
 		t.Fatal("wizard should finish despite a failed pack")
@@ -485,7 +518,7 @@ func TestFullAccessWarnsOnlyWhenSwitchedTo(t *testing.T) {
 
 func TestAgentCycleResetsModel(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{"claude": {"poteto-mode"}, "codex": {"implement"}}, true)
-	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", "enter")
+	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", "down", "enter") // Skip
 	m = press(t, m, "down", "right", " ")
 	r := m.rows[1]
 	if r.Agent != "codex" || r.Model != "" || r.Skill != "implement" {
@@ -674,7 +707,6 @@ func screensAt(t *testing.T, w, h int) map[string]string {
 	m = press(t, m, "enter")
 	views["loops"] = m.View()
 	m = press(t, m, "down", "enter")
-	m = press(t, m, " ", "down", " ", "down", " ")
 	m = toAddRow(t, m)
 	m = press(t, m, "enter")
 	m = typeText(t, m, "acme/agent-skills")

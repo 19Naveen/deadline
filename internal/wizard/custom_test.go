@@ -117,7 +117,7 @@ func TestCustomPacksInstall(t *testing.T) {
 		t.Fatalf("customs = %+v, cursor on add row %v", m.customs, m.onAddRow())
 	}
 	v := m.View()
-	for _, want := range []string{"◆ acme/agent-skills", "◆ ~/packs/mine", "[✓] claude", "[✓] opencode"} {
+	for _, want := range []string{"◆ acme/agent-skills", "◆ ~/packs/mine", "will install"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("packs view lacks %q:\n%s", want, v)
 		}
@@ -128,18 +128,9 @@ func TestCustomPacksInstall(t *testing.T) {
 		t.Fatalf("duplicate should be refused:\n%s", m.View())
 	}
 	m = press(t, m, "esc")
-	// First custom pack: untick codex, which unticks opencode with it.
-	items := m.packItems()
-	for i, it := range items {
-		if it.kind == itemCustom && it.custom == 0 && it.agent == "codex" {
-			m.cur[scrPacks] = i
-		}
-	}
-	m = press(t, m, " ")
-	if c := m.customs[0].Agents; !c["claude"] || c["codex"] || c["opencode"] {
-		t.Fatalf("shared agents should toggle together: %v", c)
-	}
-	f.rec.fail["npx -y skills@latest add acme/agent-skills -g -a claude-code -s * -y"] = "Error: repo not found"
+	// Added skills install for every detected agent; Skip the recommended.
+	m.cur[scrPacks] = 1
+	f.rec.fail["npx -y skills@latest add acme/agent-skills -g -a claude-code opencode -s * -y"] = "Error: repo not found"
 	m = press(t, m, "enter", "enter")
 	// The local pack's skill counts as available once chosen.
 	if !contains(m.available("codex"), "house-style") {
@@ -147,7 +138,7 @@ func TestCustomPacksInstall(t *testing.T) {
 	}
 	m.rows[1].Skill, m.rows[2].Skill = "house-style", "house-style"
 	m = press(t, m, "enter")
-	if v := m.View(); !strings.Contains(v, "acme/agent-skills → claude") || !strings.Contains(v, "~/packs/mine → claude, codex, opencode") {
+	if v := m.View(); !strings.Contains(v, "acme/agent-skills → claude, codex, opencode") || !strings.Contains(v, "~/packs/mine → claude, codex, opencode") {
 		t.Errorf("summary should list custom packs:\n%s", v)
 	}
 	m = press(t, m, "enter")
@@ -162,7 +153,7 @@ func TestCustomPacksInstall(t *testing.T) {
 		}
 	}
 	want := []string{
-		"npx -y skills@latest add acme/agent-skills -g -a claude-code -s * -y",
+		"npx -y skills@latest add acme/agent-skills -g -a claude-code opencode -s * -y",
 		"npx -y skills@latest add " + filepath.Join(f.home, "packs", "mine") + " -g -a claude-code opencode -s * -y",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -172,7 +163,7 @@ func TestCustomPacksInstall(t *testing.T) {
 	for _, s := range m.steps {
 		states[s.Label] = s.State
 	}
-	if states["acme/agent-skills → claude"] != stepFailed || states["~/packs/mine → claude, codex, opencode"] != stepOK || states["loops.json"] != stepOK {
+	if states["acme/agent-skills → claude, codex, opencode"] != stepFailed || states["~/packs/mine → claude, codex, opencode"] != stepOK || states["loops.json"] != stepOK {
 		t.Fatalf("a failed pack must not stop the rest: %v", states)
 	}
 	if rep := strings.Join(m.Report(), "\n"); !strings.Contains(rep, "repo not found") {
@@ -218,10 +209,14 @@ func TestOtherSkillsShown(t *testing.T) {
 	}, true)
 	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
 	v := m.View()
-	if !regexp.MustCompile(`claude .*2 · frontend-design, my-`).MatchString(v) {
+	if !strings.Contains(v, "ALREADY ON THIS MACHINE") {
+		t.Errorf("packs screen should list what each agent has:\n%s", v)
+	}
+	if !regexp.MustCompile(`claude +✓ pstack +· mattpocock +\+ 2 own: frontend-design, my-`).MatchString(v) {
 		t.Errorf("claude should show 2 other skills:\n%s", v)
 	}
-	if !regexp.MustCompile(`codex .*none`).MatchString(v) {
+	codex := regexp.MustCompile(`codex +· pstack +✓ mattpocock(.*)`).FindStringSubmatch(v)
+	if codex == nil || strings.Contains(codex[1], "own") {
 		t.Errorf("codex has no other skills:\n%s", v)
 	}
 	if got := otherSkills([]string{"poteto-mode", "principle-a", "implement", "mine"}); !reflect.DeepEqual(got, []string{"mine"}) {
@@ -241,7 +236,7 @@ func TestProjectSkillsSuggested(t *testing.T) {
 	if !contains(m.available("claude"), "house-review") || contains(m.available("codex"), "house-review") {
 		t.Fatalf("available: claude %v codex %v", m.available("claude"), m.available("codex"))
 	}
-	if v := m.View(); !strings.Contains(v, "1 · house-review") && !strings.Contains(m.packsViewText(), "house-review") {
+	if v := m.View(); !strings.Contains(v, "1 own: house-review") && !strings.Contains(m.packsViewText(), "house-review") {
 		t.Log(v)
 	}
 	m = press(t, m, "down", "right", "right", "right", " ")
@@ -301,14 +296,14 @@ func TestStepperStates(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{}, true)
 	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
 	h := m.header(80)
-	for _, want := range []string{"✓ Welcome", "✓ MCP", "✓ Loops", "● Packs", "○ Stages", "○ Summary", "◆ gotodo"} {
+	for _, want := range []string{"✓ Welcome", "✓ MCP", "✓ Loops", "● Skills", "○ Stages", "○ Summary", "◆ gotodo"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("stepper lacks %q: %s", want, h)
 		}
 	}
 	// Loops off skips Packs and Stages.
 	m = press(t, New(f.d, Options{}), "enter", "enter", "enter")
-	if h := m.header(80); !strings.Contains(h, "– Packs") || !strings.Contains(h, "– Stages") || !strings.Contains(h, "● Summary") {
+	if h := m.header(80); !strings.Contains(h, "– Skills") || !strings.Contains(h, "– Stages") || !strings.Contains(h, "● Summary") {
 		t.Errorf("skipped steps should show –: %s", h)
 	}
 	if h := m.header(50); lipglossWidthMax(h) > 50 {
@@ -320,10 +315,11 @@ func TestNoColorUsesBracketTags(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{"claude": {"poteto-mode", "code-review"}}, true)
 	f.d.NoColor = true
 	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
-	if v := m.View(); !strings.Contains(v, "[not installed]") {
+	m = addPack(t, m, "acme/agent-skills")
+	if v := m.View(); !strings.Contains(v, "◆ acme/agent-skills") || !strings.Contains(v, "[will install]") || strings.Contains(v, "\x1b[") {
 		t.Errorf("NO_COLOR packs should use bracket tags:\n%s", v)
 	}
-	m = press(t, m, "enter")
+	m = press(t, m, "up", "enter") // the added skill's row, then Next
 	if v := m.View(); !strings.Contains(v, "[edits]") || strings.Contains(v, "\x1b[") {
 		t.Errorf("NO_COLOR stages:\n%s", v)
 	}
@@ -331,16 +327,18 @@ func TestNoColorUsesBracketTags(t *testing.T) {
 
 func TestApplyAndDoneScreens(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{"claude": {"poteto-mode", "code-review"}}, true)
-	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", " ", "enter", "enter")
+	// Install recommended (the default): claude mattpocock, codex and
+	// opencode pstack, one shared codex+opencode mattpocock.
+	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", "enter", "enter")
 	next, cmd := m.Update(keyMsg("enter")) // start applying, run nothing yet
 	m = next.(Model)
 	v := m.View()
-	if m.finished || !strings.Contains(v, "Applying…") || !strings.Contains(v, "0/5") || !strings.Contains(v, "running") {
+	if m.finished || !strings.Contains(v, "Applying…") || !strings.Contains(v, "0/8") || !strings.Contains(v, "running") {
 		t.Fatalf("apply screen:\n%s", v)
 	}
 	m = drain(m, cmd)
 	v = m.View()
-	for _, want := range []string{"✓ gotodo is set up", "WHAT CHANGED", "MCP server", "✓ Claude Code", "✓ mattpocock → claude",
+	for _, want := range []string{"✓ gotodo is set up", "WHAT CHANGED", "MCP server", "✓ Claude Code", "✓ mattpocock → claude", "✓ mattpocock → codex, opencode",
 		"wrote ~/.config/gotodo/loops.json", "TRY NEXT", "gotodo loops", "gotodo help", "26/11/2026 13:05"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("done screen lacks %q:\n%s", want, v)
