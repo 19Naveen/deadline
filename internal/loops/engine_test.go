@@ -541,3 +541,31 @@ func TestStopKillsAndReleases(t *testing.T) {
 		t.Errorf("status after stop = %+v", r)
 	}
 }
+
+func TestDispatchFindsProjectSkills(t *testing.T) {
+	f := installFakes(t) // no user skills at all
+	path, ids := newBoard(t, 2)
+	writeCfg(t, path, enabledCfg())
+	Prime(path, base)
+	// implement lives only in the project: indev launches.
+	mkSkill(t, ProjectRoot(path), ".claude", "skills", "implement")
+	at := base.Add(time.Minute)
+	move(t, path, ids[0], task.StatusInDev, "", at)
+	if got, _ := Dispatch(path, at); len(got) != 1 || got[0].Stage != "indev" {
+		t.Fatalf("project skill: launches = %+v", got)
+	}
+	// verify (codex) is nowhere: testing-review is skipped with a note.
+	at = at.Add(time.Minute)
+	move(t, path, ids[1], task.StatusTestingReview, "", at)
+	if got, _ := Dispatch(path, at); len(got) != 0 {
+		t.Fatalf("missing skill launched: %+v", got)
+	}
+	b, _ := task.Load(path)
+	tk, _ := b.TaskByID(ids[1])
+	if !strings.Contains(tk.Description, "loop skipped: skill verify not found for codex") {
+		t.Errorf("description = %q", tk.Description)
+	}
+	if len(f.launched()) != 1 {
+		t.Errorf("runners = %v", f.launched())
+	}
+}

@@ -18,7 +18,9 @@ type editor struct {
 	input   textinput.Model
 	options []string
 	matches []string
-	sel     int // -1: use the typed text
+	sel     int               // -1: use the typed text
+	tags    map[string]string // muted label after a suggestion, e.g. "project"
+	hint    string            // shown when nothing matches the typed text
 }
 
 func newEditor(field int, label, value, placeholder string, options []string) *editor {
@@ -84,7 +86,10 @@ func (e *editor) view(width int) string {
 	first := accentStyle.Render(e.label) + " " + e.input.View()
 	if len(e.matches) == 0 {
 		hint := "no matches, enter uses what you typed"
-		if len(e.options) == 0 {
+		switch {
+		case e.hint != "":
+			hint = e.hint
+		case len(e.options) == 0:
 			hint = "type a value, or leave blank for the default"
 		}
 		return first + "\n" + mutedStyle.Render("  "+hint)
@@ -97,7 +102,7 @@ func (e *editor) view(width int) string {
 	used := 2
 	var shown []string
 	for i := start; i < len(e.matches); i++ {
-		w := lipgloss.Width(e.matches[i]) + 3
+		w := lipgloss.Width(e.render(i)) + 3
 		if used+w > width {
 			break
 		}
@@ -105,7 +110,7 @@ func (e *editor) view(width int) string {
 		shown = append(shown, e.render(i))
 	}
 	for i := start - 1; i >= 0; i-- {
-		w := lipgloss.Width(e.matches[i]) + 3
+		w := lipgloss.Width(e.render(i)) + 3
 		if used+w > width {
 			break
 		}
@@ -116,10 +121,14 @@ func (e *editor) view(width int) string {
 }
 
 func (e *editor) render(i int) string {
+	s := mutedStyle.Render(e.matches[i])
 	if i == e.sel {
-		return cellStyle.Render(e.matches[i])
+		s = cellStyle.Render(e.matches[i])
 	}
-	return mutedStyle.Render(e.matches[i])
+	if t := e.tags[e.matches[i]]; t != "" {
+		s += mutedStyle.Render(" (" + t + ")")
+	}
+	return s
 }
 
 // fuzzy keeps options matching query as a case-insensitive subsequence,

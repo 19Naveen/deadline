@@ -80,6 +80,7 @@ func newFixture(t *testing.T, agents []string, skills map[string][]string, npx b
 	}
 	rec := &recorder{fail: map[string]string{}}
 	d := Deps{
+		Cwd:      home,
 		LookPath: look,
 		Run:      rec.run,
 		Skills:   func(a string) []string { return skills[a] },
@@ -344,7 +345,7 @@ func TestPacksOfferedOnlyWhenMissing(t *testing.T) {
 	if !strings.Contains(v, "one shared install in ~/.agents/skills") {
 		t.Error("packs screen should explain the shared mattpocock install")
 	}
-	if strings.Count(v, "installed") != 4 {
+	if strings.Count(v, "✓ installed") != 4 {
 		t.Errorf("expected 4 installed cells:\n%s", v)
 	}
 }
@@ -442,9 +443,13 @@ func TestPackFailureDoesNotAbort(t *testing.T) {
 	}
 }
 
-func TestFullPermissionWarning(t *testing.T) {
+func TestFullAccessWarnsOnlyWhenSwitchedTo(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{"claude": {"poteto-mode", "code-review"}}, true)
-	m := press(t, New(f.d, Options{}), "enter", "enter", "down", "enter", "enter")
+	m := press(t, New(f.d, Options{}), "enter", "enter")
+	if v := m.View(); strings.Contains(v, "spend tokens") || !strings.Contains(v, "Change them any time with gotodo loops or gotodo setup.") {
+		t.Fatalf("loops screen should be neutral:\n%s", v)
+	}
+	m = press(t, m, "down", "enter", "enter")
 	if strings.Contains(m.View(), "full access") {
 		t.Fatal("no warning before choosing full")
 	}
@@ -453,16 +458,28 @@ func TestFullPermissionWarning(t *testing.T) {
 	if m.rows[1].Perm != loops.PermFull {
 		t.Fatalf("perm = %q", m.rows[1].Perm)
 	}
-	if !strings.Contains(m.View(), "full access") {
-		t.Fatal("stages screen should warn about full access")
+	if v := m.View(); strings.Count(v, "full access") != 1 || !strings.Contains(v, "indev now has full access") {
+		t.Fatalf("one warning right after switching to full:\n%s", v)
+	}
+	m = press(t, m, "up")
+	if strings.Contains(m.View(), "full access") {
+		t.Fatal("the next key clears the warning")
 	}
 	m = press(t, m, "enter")
-	if !strings.Contains(m.View(), "full access skips every permission prompt") {
-		t.Fatal("summary should warn about full access")
+	if v := m.View(); m.scr != scrSummary || strings.Contains(v, "full access") || strings.Contains(v, "unattended") {
+		t.Fatalf("summary must not warn (the access tag says full):\n%s", v)
 	}
-	m = press(t, m, "esc", " ")
+	if v := m.View(); !strings.Contains(v, " full ") {
+		t.Fatalf("summary should tag the stage full:\n%s", v)
+	}
+	// Cycling full → readonly → edits → full warns again, once each time.
+	m = press(t, m, "esc", "down", " ")
 	if m.rows[1].Perm != loops.PermReadOnly || strings.Contains(m.View(), "full access") {
-		t.Fatal("cycling past full clears the warning")
+		t.Fatal("cycling past full shows no warning")
+	}
+	m = press(t, m, " ", " ")
+	if !strings.Contains(m.View(), "full access") {
+		t.Fatal("switching to full again warns again")
 	}
 }
 
@@ -646,7 +663,7 @@ func TestFuzzy(t *testing.T) {
 // screensAt walks to every screen with the busiest content (five stages
 // on, full access, an open editor) and returns each view.
 func screensAt(t *testing.T, w, h int) map[string]string {
-	f := newFixture(t, all3(), map[string][]string{"claude": {"code-review", "poteto-mode"}}, false)
+	f := newFixture(t, all3(), map[string][]string{"claude": {"code-review", "poteto-mode", "frontend-design", "impeccable", "ponytail-review"}}, true)
 	writeExisting(t, f.d.ConfigPath)
 	m := New(f.d, Options{})
 	next, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
@@ -658,8 +675,13 @@ func screensAt(t *testing.T, w, h int) map[string]string {
 	views["loops"] = m.View()
 	m = press(t, m, "down", "enter")
 	m = press(t, m, " ", "down", " ", "down", " ")
-	views["packs"] = m.View()
+	m = toAddRow(t, m)
 	m = press(t, m, "enter")
+	m = typeText(t, m, "acme/agent-skills")
+	views["source"] = m.View()
+	m = press(t, m, "enter")
+	views["packs"] = m.View()
+	m = press(t, m, "up", "enter") // off the add row, then Next
 	views["existing"] = m.View()
 	m = press(t, m, "down", "enter")
 	for i := 0; i < 5; i++ { // every stage on, with a skill and full access
@@ -684,7 +706,7 @@ func screensAt(t *testing.T, w, h int) map[string]string {
 }
 
 func TestViewsFitTerminal(t *testing.T) {
-	for _, size := range [][2]int{{80, 18}, {80, 24}, {120, 40}} {
+	for _, size := range [][2]int{{80, 18}, {80, 24}, {120, 40}, {100, 30}} {
 		w, h := size[0], size[1]
 		for name, v := range screensAt(t, w, h) {
 			lines := strings.Split(v, "\n")
@@ -705,9 +727,10 @@ func TestViewsFitTerminal(t *testing.T) {
 }
 
 func TestStagesFitWithoutClipping(t *testing.T) {
-	// At 80x18 the busiest stages screen keeps every row and the warning.
+	// At 80x18 the busiest stages screen keeps every row, the headers and
+	// the access tags.
 	v := screensAt(t, 80, 18)["stages"]
-	for _, want := range append(append([]string{}, StageNames...), "full access", "gotodo loops set") {
+	for _, want := range append(append([]string{}, StageNames...), "STAGE", "AGENT", "MODEL", "SKILL", "ACCESS", " full ", "gotodo loops set") {
 		if !strings.Contains(v, want) {
 			t.Errorf("80x18 stages view lost %q:\n%s", want, v)
 		}

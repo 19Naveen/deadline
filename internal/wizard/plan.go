@@ -31,6 +31,14 @@ type Deps struct {
 	ConfigPath string                      // loops.json to write
 	Home       string                      // cwd for installs, ~ in paths
 	Now        func() time.Time
+
+	// Project is the project the wizard was started in ("" for none);
+	// ProjectSkills lists the skills an agent loads from it.
+	Project       string
+	ProjectSkills func(agent string) []string
+	Cwd           string // resolves relative pack folders
+	NoColor       bool   // NO_COLOR: plain tags, no colours
+	Animate       bool   // spinner ticks while applying
 }
 
 // Options preset answers from flags.
@@ -49,15 +57,45 @@ func DefaultDeps() (Deps, error) {
 	if err != nil {
 		return Deps{}, err
 	}
+	cwd, _ := os.Getwd()
+	project := FindProject(cwd, env.Home)
 	return Deps{
-		LookPath:   exec.LookPath,
-		Run:        execRunner,
-		Skills:     loops.InstalledSkills,
-		MCP:        env,
-		ConfigPath: path,
-		Home:       env.Home,
-		Now:        time.Now,
+		LookPath:      exec.LookPath,
+		Run:           execRunner,
+		Skills:        loops.InstalledSkills,
+		MCP:           env,
+		ConfigPath:    path,
+		Home:          env.Home,
+		Now:           time.Now,
+		Project:       project,
+		ProjectSkills: func(agent string) []string { return loops.ProjectSkills(agent, project) },
+		Cwd:           cwd,
+		NoColor:       os.Getenv("NO_COLOR") != "",
+		Animate:       true,
 	}, nil
+}
+
+// FindProject walks up from dir to the nearest folder holding .deadline or
+// .git. Home itself is never a project: its skill folders are the user's.
+func FindProject(dir, home string) string {
+	if dir == "" {
+		return ""
+	}
+	for {
+		if dir == home {
+			return ""
+		}
+		for _, marker := range []string{".deadline", ".git"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // execRunner runs a pack install with no stdin, so a prompt fails fast

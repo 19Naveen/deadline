@@ -173,10 +173,12 @@ The script detects your distro (`apt`, `pacman`, `dnf`/`yum`, `zypper`, `apk`), 
 
 1. **Welcome**: which agent CLIs were found (`claude`, `codex`, `opencode`).
 2. **MCP**: tick the agents to register the gotodo MCP server with.
-3. **Stage loops?** (default No): when a card enters a column, gotodo starts an agent with a skill on it. Loops run unattended and use tokens.
-4. **Skill packs**: per agent, whether [pstack](https://github.com/michael-denyer/pstack-claude) and [mattpocock/skills](https://github.com/mattpocock/skills) are present; tick missing ones to install. A pack already present from any source is never offered again. mattpocock for Codex and OpenCode is one shared install in `~/.agents/skills` (needs `npx`; update later with `npx skills update -g`).
-5. **Stages**: per development column (todo, indev, testing-review, blocked, shipped): on/off, agent, model, skill (pick from installed skills or type one) and access (`readonly`, `edits`, `full`). Defaults: indev and testing-review on with Claude, `edits` access. Personal boards (doing/done) are set with `gotodo loops set`.
-6. **Summary**: confirm, then each step shows its result; a failed pack install does not stop the rest. An existing `~/.config/gotodo/loops.json` is only replaced if you choose to.
+3. **Stage loops?** (default No): when a card enters a column, gotodo starts an agent with a skill on it. Change them any time with `gotodo loops` or `gotodo setup`.
+4. **Skill packs**: per agent, whether [pstack](https://github.com/michael-denyer/pstack-claude) and [mattpocock/skills](https://github.com/mattpocock/skills) are present; tick missing ones to install. A pack already present from any source is never offered again. An *other skills* column counts the skills each agent already has from anywhere else, including the current project. **+ add a skill pack…** installs your own pack: a GitHub `owner/repo`, a git or https URL, or a local folder with at least one `SKILL.md` (up to two levels down), for the agents you tick, with `npx skills add <source> -g -a <agents> -s '*' -y`. Add as many as you like; `d` removes one. Codex and OpenCode packs are one shared install in `~/.agents/skills` (needs `npx`; update later with `npx skills update -g`).
+5. **Stages**: per development column (todo, indev, testing-review, blocked, shipped): on/off, agent, model, skill and access (`readonly`, `edits`, `full`, shown as a coloured tag). The skill field suggests every skill the agent can load, user and project (marked `(project)`), or takes any name; a skill that is not installed gets a quiet note that loops will skip it until it is. Switching a stage to `full` shows a one-line warning until the next key. Defaults: indev and testing-review on with Claude, `edits` access. Personal boards (doing/done) are set with `gotodo loops set`.
+6. **Summary**: confirm, then each step shows a spinner, its result and how long it took, under a progress bar; a failed pack install does not stop the rest. An existing `~/.config/gotodo/loops.json` is only replaced if you choose to. The last screen lists what changed and the commands to try next.
+
+The wizard follows `NO_COLOR` (tags become `[brackets]`) and fits an 80x18 terminal.
 
 Without a terminal (CI, `--yes`) the installer runs `gotodo setup -yes -no-loops`, which only registers the MCP server. Installer flags pass through: `--yes` skips the wizard, `--loops` / `--no-loops` preset the loops question (with `--yes`, `--loops` writes default loops when no config exists). Run `gotodo setup` again any time; `gotodo setup -dry-run` previews the MCP changes.
 
@@ -716,7 +718,9 @@ With `edits`, Claude Code can edit files but cannot run shell commands other tha
 
 Loops start after every change from the CLI, the TUI, the MCP server and `pr sync`. An agent started by a loop finds the board through `GOTODO_BOARD`, even from a worktree with no `.deadline` of its own. A loop started by a sandboxed agent (for example Codex running `gotodo move`) inherits that sandbox.
 
-The setup wizard (`gotodo setup`, opened by `install.sh`) asks whether you want loops, offers to install the pstack and mattpocock skill packs for agents that lack them, and lets you pick the agent, model, skill and permissions for each stage.
+The setup wizard (`gotodo setup`, opened by `install.sh`) asks whether you want loops, offers to install the pstack and mattpocock skill packs for agents that lack them (and any pack of your own by GitHub `owner/repo`, URL or folder), and lets you pick the agent, model, skill and permissions for each stage.
+
+Loops find skills in the agent's user folders and plugins and in the project: `.claude/skills` for Claude Code; `.agents/skills` and `.codex/skills` for Codex; `.opencode/skills`, `.claude/skills` and `.agents/skills` for OpenCode, under the project root and the card's worktree. A skill committed to the repository is enough.
 
 ### Watching loops
 
