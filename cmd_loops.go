@@ -249,7 +249,7 @@ func runLoopsSet(path string, args []string) error {
 		fmt.Printf("created %s\n", target)
 	}
 	fmt.Printf("loop %s: %s · model %s · skill %s · permissions %s\n", stage, st.Agent, dash(st.Model), dash(st.Skill), st.Perm())
-	if st.Skill != "" && !loops.Hooks.HasSkill(st.Agent, st.Skill) {
+	if st.Skill != "" && !loops.StageSkillFound(path, st) {
 		fmt.Printf("warning: skill %s not found for %s; runs will be skipped until it is installed (gotodo setup)\n", st.Skill, st.Agent)
 	}
 	if st.Perm() == loops.PermFull {
@@ -468,7 +468,7 @@ func runLoopsStatus(path string) error {
 			installed := "✓"
 			if st.Skill == "" {
 				installed = "-"
-			} else if !loops.Hooks.HasSkill(st.Agent, st.Skill) {
+			} else if !loops.StageSkillFound(path, st) {
 				installed = "✗"
 			}
 			label := name

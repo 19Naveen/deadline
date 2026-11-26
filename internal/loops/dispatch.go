@@ -241,6 +241,13 @@ func dispatchLocked(boardPath, dir string, cfg Config, b *task.Board, s *state, 
 	return launches, notes
 }
 
+// StageSkillFound reports whether a stage's agent can load its skill from
+// the user's skill directories or the project at boardPath's root. Status
+// output uses it so ✓/✗ agrees with what Dispatch will do.
+func StageSkillFound(boardPath string, st Stage) bool {
+	return Hooks.HasSkill(st.Agent, st.Skill) || hasSkillName(ProjectSkills(st.Agent, ProjectRoot(boardPath)), st.Skill)
+}
+
 // skillFound reports whether a stage's agent can load its skill: from the
 // user's skill directories (Hooks.HasSkill), or from the project skills of
 // the project root or the task's worktree, where the run starts.

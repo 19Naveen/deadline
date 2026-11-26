@@ -180,3 +180,31 @@ func TestLoopsRunThenLogs(t *testing.T) {
 		t.Errorf("stop with nothing running = %q %v", out, err)
 	}
 }
+
+// A skill that lives only in the project's .claude/skills is reported as
+// installed, matching what Dispatch does when it starts the run.
+func TestLoopsStatusSeesProjectSkills(t *testing.T) {
+	board, _ := loopsEnv(t)
+	root := filepath.Dir(filepath.Dir(board))
+	skill := filepath.Join(root, ".claude", "skills", "house-style")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: house-style\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runOut(t, "-file", board, "loops", "set", "indev", "-agent", "claude", "-skill", "house-style", "-project")
+	if err != nil || strings.Contains(out, "not found") {
+		t.Fatalf("set: %v\n%s", err, out)
+	}
+	out, _ = runOut(t, "-file", board, "loops")
+	line := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "indev") {
+			line = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "✓") {
+		t.Errorf("project skill not reported installed: %q\n%s", line, out)
+	}
+}
