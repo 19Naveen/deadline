@@ -17,6 +17,7 @@
 //	gotodo edit 3fa1c9e2 -desc "Ready for review"
 //	gotodo edit 3fa1c9e2 -worktree ../deadline-parser
 //	gotodo delete 3fa1c9e2
+//	gotodo mcp                                               # MCP server on stdio for coding agents
 //	gotodo version
 //
 // The global -file flag, when given, must precede the subcommand.
@@ -121,11 +122,13 @@ func run(argv []string) error {
 		return runEdit(path, args[1:])
 	case "delete":
 		return runDelete(path, args[1:])
+	case "mcp":
+		return runMCP(path, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete or version)", args[0])
+		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete, mcp or version)", args[0])
 	}
 }
 
