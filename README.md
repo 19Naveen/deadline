@@ -204,7 +204,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 
 | Key | What it does |
 |---|---|
-| `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `o` open a document, `y` approve, `esc` close |
+| `enter` | expand the selected task in a centred popup — `e` edit, `d` delete, `o` open a document, `v` verify & ship, `esc` close |
 | `a` | add a task |
 | `s` | add a subtask under the selected task's family |
 | `f` | focus the board on the selected parent and its subtasks; press again to clear |
@@ -212,6 +212,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `d` | delete it, after a `y`/`n` confirm popup that names the task |
 | `m` | grab it, then `h`/`l` to drag between columns, `enter` to drop, `esc` to cancel |
 | `/` | search; cards filter as you type, `enter` keeps the filter, `esc` clears it |
+| `v` | verify & ship: move the selected review card to the terminal column as you |
 | `u` | undo the last move, edit, delete, add or approval (up to 20 steps) |
 | `A` | turn the approval gate on or off |
 | `h` `l` | previous / next column |
@@ -226,8 +227,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 `enter` on a card opens it centred on the screen: the full title, its
 parent, deadline, worktree and ID, then whichever of priority, labels,
 blocked by (up to three, then `+N more`), claim (`until 30/07/2026 15:30`, or
-`expired`), PR, last agent and `awaiting approval` are set, then the subtask
-checklist and the description, attachments and working notes. The body
+`expired`), PR, last agent and `awaiting approval` (or `ready to verify`) are
+set, then the description, the subtask checklist, attachments and working
+notes. The body
 reserves at least ten rows when space permits; long bodies scroll with
 `j`/`k`. It is read-only, but `s`, `e` and `d` work from there.
 
@@ -256,12 +258,16 @@ returns the task to its earlier state, history entries included; a delete
 brings the task back with its subtasks re-attached; an add deletes the new
 task. The footer confirms with `undone: <what>`.
 
+**Verify & ship.** A card in the review column (testing-review on project
+boards, doing on personal ones) offers `v Verify` in the board footer and
+`v Verify & ship` in its popup. `v` moves it to the terminal column as you, a
+human, even if `GOTODO_AGENT` is set in that terminal, and `u` undoes it.
+
 **Approval.** With the gate on (`A`), agents cannot move cards into the
-terminal column, so finished work waits in review (testing-review on project
-boards, doing on personal ones) with `awaiting approval` in its popup. `y`
-ships it as you, a human, even if `GOTODO_AGENT` is set in that terminal.
-Dropping or approving a card re-checks dependencies at once, the same as
-`gotodo move` (see below).
+terminal column, so finished work waits in review with `awaiting approval` in
+its popup (`ready to verify` when the gate is off). `v` ships it; `y` still
+works as an alias while the gate is on. Dropping or approving a card
+re-checks dependencies at once, the same as `gotodo move` (see below).
 
 Adding and editing open the same form, centred in the same place. `tab` and
 `shift+tab` move between Title, Description, Deadline, Worktree, Parent,
@@ -270,11 +276,23 @@ terminal every gap goes at once, never just one), only the focused field shows
 a hint, and fields you are not in show the start of their value, so a long
 title or parent stays recognisable. The footer lists the keys for the field
 you are on.
-Worktree is optional free text — the git worktree path or branch the work
-lives in — and a new subtask starts with its parent's.
+Worktree is the git worktree path or branch the work lives in, and a new
+subtask starts with its parent's. Inside a git repository the field opens a
+dropdown of the repository's worktrees (with their branches) and local
+branches, fuzzy-matched as you type (prefix first, then word starts, then any
+substring, then scattered letters). `up`/`down` (or `ctrl+p`/`ctrl+n`)
+highlight and `enter` picks: a worktree fills in its path, a branch its name.
+A name that matches nothing exactly adds a last row,
+`+ create worktree ../<repo>-<slug> on new branch <name>`; only highlighting
+that row and pressing `enter` runs `git worktree add -b <name> <path>`, and
+any git error shows in the form. Outside a repository the field is plain text.
 Attachments are paths to user-provided reference files; Working notes are
-paths to agent-created documents. Enter multiple paths as comma-separated CSV,
-quoting a path if it contains a comma. Paths are references, not copies.
+paths to agent-created documents. Typing fuzzy-searches the files inside the
+project root (`git ls-files`, so ignored files stay out; a bounded folder walk
+outside git), `enter` adds the highlighted file as a chip (`docs/plan.md ×`),
+and `backspace` on an empty search removes the last chip. A path that matches
+no file, or one outside the project (`/…`, `~/…`, `../…`), is added as typed.
+Paths are references, not copies.
 On Parent, type a title or ID to filter the visible dropdown, use `up`/`down`
 to highlight a match, and press `enter` to choose it. Clear the text for no
 parent. The dropdown shows titles and short IDs together, so nothing must be
@@ -508,7 +526,7 @@ gotodo approval off
 ```
 
 With approval on, an agent's move into the terminal column is refused; a human
-ships it from the TUI (`y`) or a plain CLI. `approval on` and `off` are refused
+ships it from the TUI (`v`) or a plain CLI. `approval on` and `off` are refused
 when `GOTODO_AGENT` is set, so an agent cannot lift the gate that reviews it.
 `approval status` works for everyone.
 

@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"gotodo/internal/project"
 	"gotodo/internal/task"
 )
 
@@ -70,6 +71,12 @@ type BoardModel struct {
 	formParentID   string
 	parentIndex    int
 	parentChoosing bool
+	// The Worktree and document pickers search the project with git (or a
+	// directory walk); git and root are swapped out by tests.
+	wt   worktreePicker
+	doc  docPicker
+	git  project.Runner
+	root string
 
 	editID   string      // set while editing an existing task
 	grabID   string      // set while in modeMove
@@ -99,7 +106,7 @@ type BoardModel struct {
 
 // NewBoardModel wires a board into a fresh page model.
 func NewBoardModel(b *task.Board) BoardModel {
-	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now, opener: openDocument}
+	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now, opener: openDocument, git: defaultGit}
 	m.sel = make([]int, len(b.Statuses()))
 
 	line := func(placeholder string, limit int) textinput.Model {
@@ -113,8 +120,11 @@ func NewBoardModel(b *task.Board) BoardModel {
 	m.deadline = line("DD/MM/YYYY", 10)
 	m.worktree = line("path or branch", 500)
 	m.parent = line("none: type a title or ID", 200)
-	m.attachments = line("none", 4000)
-	m.workingNotes = line("none", 4000)
+	// Document fields draw their own "› " before the chips.
+	m.attachments = line("file name or path", 4000)
+	m.attachments.Prompt = ""
+	m.workingNotes = line("file name or path", 4000)
+	m.workingNotes.Prompt = ""
 	m.search = line("title, #label, @agent or ID", 200)
 	m.search.Prompt = "/ "
 
@@ -681,7 +691,7 @@ func (m BoardModel) detailProps(t task.Task, width int) []string {
 
 // detailFoot is the popup's hint footer, led by any error. A non-empty
 // counter means the body scrolls: it adds the j/k hint and the window
-// position. o and y appear only when they would do something.
+// position. v and o appear only when they would do something.
 func (m BoardModel) detailFoot(t task.Task, counter string, width int) []string {
 	var hints []string
 	if m.err != "" {
@@ -690,8 +700,8 @@ func (m BoardModel) detailFoot(t task.Task, counter string, width int) []string 
 	if counter != "" {
 		hints = append(hints, keyHint("j/k", "Scroll"))
 	}
-	if m.awaitingApproval(t) {
-		hints = append(hints, keyHint("y", "Approve"))
+	if m.inReview(t) {
+		hints = append(hints, keyHint("v", "Verify & ship"))
 	}
 	if len(taskDocuments(t)) > 0 {
 		hints = append(hints, keyHint("o", "Open"))
@@ -750,24 +760,25 @@ func matchCount(n int) string {
 	return fmt.Sprintf("%d matches", n)
 }
 
-// detailBodyLines is the scrollable part: the Subtasks checklist, then the
-// Description, each under a form-style label. Empty when there is neither.
+// detailBodyLines is the scrollable part: the Description, then the
+// Subtasks checklist, then Attachments and Working notes, each under a
+// form-style label. Empty when there is none of them.
 func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
 	var rows []string
+	if t.Description != "" {
+		rows = append(rows, detailLabel("Description", "", w))
+		for _, line := range strings.Split(renderMarkdown(t.Description, w-2), "\n") {
+			rows = append(rows, indent(line))
+		}
+	}
 	if children := m.board.Children(t.ID); len(children) > 0 {
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
 		done, total := m.board.ChildProgress(t.ID)
 		rows = append(rows, detailLabel("Subtasks", fmt.Sprintf("%d of %d complete", done, total), w))
 		for _, child := range children {
 			rows = append(rows, indent(m.childDetailLine(child, w-2)))
-		}
-	}
-	if t.Description != "" {
-		if len(rows) > 0 {
-			rows = append(rows, "")
-		}
-		rows = append(rows, detailLabel("Description", "", w))
-		for _, line := range strings.Split(renderMarkdown(t.Description, w-2), "\n") {
-			rows = append(rows, indent(line))
 		}
 	}
 	for _, section := range []struct {
@@ -788,27 +799,6 @@ func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
 		}
 	}
 	return rows
-}
-
-// Document paths use CSV quoting, allowing commas and spaces in file names.
-func formatDocumentPaths(paths []string) string {
-	if len(paths) == 0 {
-		return ""
-	}
-	var out strings.Builder
-	writer := csv.NewWriter(&out)
-	_ = writer.Write(paths)
-	writer.Flush()
-	return strings.TrimSuffix(out.String(), "\n")
-}
-
-func parseDocumentPaths(value string) ([]string, error) {
-	if strings.TrimSpace(value) == "" {
-		return nil, nil
-	}
-	r := csv.NewReader(strings.NewReader(value))
-	r.TrimLeadingSpace = true
-	return r.Read()
 }
 
 // childDetailLine is one checklist row: a tick or circle, the title, and
@@ -868,9 +858,10 @@ func (m *BoardModel) openForm(editID, title, desc string, deadline *time.Time, w
 	m.worktree.SetValue(worktree)
 	m.attachments.SetValue("")
 	m.workingNotes.SetValue("")
+	m.doc = docPicker{}
+	m.wt = worktreePicker{index: -1}
 	if t, ok := m.board.TaskByID(editID); ok {
-		m.attachments.SetValue(formatDocumentPaths(t.Attachments))
-		m.workingNotes.SetValue(formatDocumentPaths(t.WorkingNotes))
+		m.doc.paths = [2][]string{slices.Clone(t.Attachments), slices.Clone(t.WorkingNotes)}
 	}
 	m.formParentID = parentID
 	m.parentIndex = 0
@@ -908,6 +899,10 @@ func (m *BoardModel) closeForm() {
 	m.parent.SetValue("")
 	m.parentIndex = 0
 	m.parentChoosing = false
+	m.wt = worktreePicker{index: -1}
+	m.doc = docPicker{}
+	m.attachments.SetValue("")
+	m.workingNotes.SetValue("")
 }
 
 // applyFieldFocus focuses m.field's widget, blurs the rest, and opens the
@@ -932,6 +927,7 @@ func (m *BoardModel) applyFieldFocus() {
 	case fieldWorktree:
 		m.worktree.Focus()
 		m.worktree.CursorEnd()
+		m.loadWorktrees() // fresh lists each time the field gains focus
 	case fieldParent:
 		m.parent.Focus()
 		m.parent.CursorEnd()
@@ -942,6 +938,11 @@ func (m *BoardModel) applyFieldFocus() {
 	case fieldWorkingNotes:
 		m.workingNotes.Focus()
 		m.workingNotes.CursorEnd()
+	}
+	if isDocField(m.field) {
+		m.loadFiles() // once per form open
+		m.doc.choosing = strings.TrimSpace(m.docQuery(m.field)) != ""
+		m.refreshDocRows()
 	}
 	if m.field == fieldDeadline {
 		m.seedPicker()
@@ -1016,8 +1017,6 @@ func (m BoardModel) parentOptions() []task.Task {
 	return options
 }
 
-const parentDropdownRows = 4
-
 func (m BoardModel) filteredParentOptions() []task.Task {
 	query := strings.ToLower(strings.TrimSpace(m.parent.Value()))
 	options := m.parentOptions()
@@ -1061,63 +1060,15 @@ func (m *BoardModel) chooseHighlightedParent() bool {
 	return true
 }
 
-func (m BoardModel) renderParentDropdown(width int) string {
-	return m.renderParentDropdownSized(width, m.parentDropdownHeight())
-}
-
-// renderParentDropdownSized draws the dropdown in at most height rows.
+// renderParentDropdownSized draws the parent options in at most height rows.
 func (m BoardModel) renderParentDropdownSized(width, height int) string {
-	if height == 0 {
-		return ""
-	}
 	options := m.filteredParentOptions()
-	index := m.parentIndex
-	if index >= len(options) {
-		index = max(0, len(options)-1)
+	rows := make([]pickRow, len(options))
+	for i, o := range options {
+		rows[i] = pickRow{label: o.Title, tag: shortTaskID(o.ID), value: o.ID}
 	}
-	heading := truncate(matchCount(len(options)), width-6)
-	lines := []string{MutedStyle.Copy().Bold(true).Render(heading)}
-	if len(options) == 0 {
-		lines = append(lines, MutedStyle.Render(truncate("No matching parent tasks", width-6)))
-	} else {
-		visibleRows := parentDropdownRows
-		if height >= 4 && visibleRows > height-3 {
-			visibleRows = height - 3
-		}
-		if height < 4 {
-			visibleRows = max(1, height-1)
-		}
-		start := 0
-		if index >= visibleRows {
-			start = index - visibleRows + 1
-		}
-		end := start + visibleRows
-		if end > len(options) {
-			end = len(options)
-		}
-		for i := start; i < end; i++ {
-			prefix := "  "
-			style := MutedStyle
-			if i == index {
-				prefix = "› "
-				style = lipgloss.NewStyle().Foreground(ColAccent).Bold(true)
-			}
-			id := shortTaskID(options[i].ID)
-			avail := width - 8 - len(id) // border, padding, "› " and "  "
-			if avail < 1 {
-				avail = 1
-			}
-			lines = append(lines, style.Render(prefix+truncate(options[i].Title, avail)+"  "+id))
-		}
-	}
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	if height < 4 {
-		return strings.Join(lines, "\n")
-	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColMuted).Padding(0, 1).Width(width - 2).Render(strings.Join(lines, "\n"))
+	index := min(m.parentIndex, max(len(rows)-1, 0))
+	return renderDropdown(width, height, matchCount(len(options)), rows, index, "No matching parent tasks")
 }
 
 // formDateWidths splits a form row between Deadline and Worktree, two apart.
@@ -1161,7 +1112,9 @@ func (m BoardModel) renderFooter() string {
 		if m.familyID != "" {
 			items = append(items, keyHint("f", "Show all"))
 		}
-		items = append(items, keyHint("enter", "Open"), keyHint("m", "Grab"))
+		items = append(items, keyHint("enter", "Open"))
+		items = append(items, m.verifyHint()...)
+		items = append(items, keyHint("m", "Grab"))
 	case m.mode == modeMove:
 		if m.err == "" {
 			items = append(items, statusTag("Moving"))
@@ -1174,15 +1127,32 @@ func (m BoardModel) renderFooter() string {
 			name = parent.Title
 		}
 		items = append(items, statusTag("Family")+" "+MutedStyle.Render(truncate(name, 30)),
-			keyHint("f", "Show all"), keyHint("s", "Subtask"), keyHint("enter", "Open"), keyHint("m", "Grab"))
+			keyHint("f", "Show all"), keyHint("s", "Subtask"), keyHint("enter", "Open"))
+		items = append(items, m.verifyHint()...)
+		items = append(items, keyHint("m", "Grab"))
 	default:
 		// hjkl and s live in ? help and the detail popup, so the bar still
 		// fits one row at 120 columns with undo and search added.
-		items = append(items, keyHint("enter", "Open"), keyHint("a", "Add"),
+		// A review card swaps ctrl+t for v Verify, keeping the row length.
+		items = append(items, keyHint("enter", "Open"))
+		items = append(items, m.verifyHint()...)
+		items = append(items, keyHint("a", "Add"),
 			keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("u", "Undo"),
-			keyHint("/", "Search"), keyHint("m", "Grab"), keyHint("f", "Family"), keyHint("ctrl+t", "Focus"))
+			keyHint("/", "Search"), keyHint("m", "Grab"), keyHint("f", "Family"))
+		if len(m.verifyHint()) == 0 {
+			items = append(items, keyHint("ctrl+t", "Focus"))
+		}
 	}
 	return HelpStyle.Render(hintBar(m.width, append(items, globalHints()...)...))
+}
+
+// verifyHint is the footer's "v Verify" while the selected card sits in
+// the review column; empty otherwise.
+func (m BoardModel) verifyHint() []string {
+	if t, ok := m.selectedTask(); ok && m.focus == focusItem && m.inReview(t) {
+		return []string{keyHint("v", "Verify")}
+	}
+	return nil
 }
 
 // renderConfirm is the delete prompt; it names the task so a stray d never
@@ -1347,6 +1317,11 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 			m.setQuery("")
 			return m, nil
 		}
+	case "v":
+		if t, ok := m.selectedTask(); ok && m.inReview(t) {
+			return m.approve(t)
+		}
+		return m, nil
 	case "u":
 		if m.undoLast() {
 			return m, dirty()
@@ -1366,7 +1341,8 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 	return m, nil
 }
 
-// approve ships a card waiting for review, as the human at the keyboard.
+// approve ships a card from the review column (v, or y with the gate on)
+// as the human at the keyboard, with undo.
 func (m BoardModel) approve(t task.Task) (BoardModel, tea.Cmd) {
 	before := m.snapshotTasks(t.ID)
 	actor := m.board.Actor
@@ -1412,6 +1388,12 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if m.field == fieldWorktree && m.pickWorktree() {
+			return m, nil
+		}
+		if m.addDocument() {
+			return m, nil
+		}
 		title := strings.TrimSpace(m.title.Value())
 		if title == "" {
 			m.err = "title must not be blank"
@@ -1431,20 +1413,20 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			m.applyFieldFocus()
 			return m, nil
 		}
+		for _, f := range []struct {
+			field int
+			name  string
+		}{{fieldAttachments, "attachment"}, {fieldWorkingNotes, "working note"}} {
+			if strings.TrimSpace(m.docQuery(f.field)) != "" {
+				m.err = "press enter to add the " + f.name + ", or clear its search"
+				m.field = f.field
+				m.applyFieldFocus()
+				return m, nil
+			}
+		}
 		parentID := m.formParentID
 		worktree := m.worktree.Value()
-		attachments, err := parseDocumentPaths(m.attachments.Value())
-		if err != nil {
-			m.err = "invalid attachments: use CSV-quoted paths"
-			m.sizeForm()
-			return m, nil
-		}
-		notes, err := parseDocumentPaths(m.workingNotes.Value())
-		if err != nil {
-			m.err = "invalid working notes: use CSV-quoted paths"
-			m.sizeForm()
-			return m, nil
-		}
+		attachments, notes := m.doc.paths[0], m.doc.paths[1]
 
 		selectedID := m.editID
 		before := m.snapshotTasks(m.editID)
@@ -1516,6 +1498,54 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.field == fieldWorktree && m.wt.repo {
+		switch k.String() {
+		case "up", "ctrl+p":
+			m.moveWorktreeHighlight(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.moveWorktreeHighlight(1)
+			return m, nil
+		}
+		before := m.worktree.Value()
+		var cmd tea.Cmd
+		m.worktree, cmd = m.worktree.Update(k)
+		if m.worktree.Value() != before {
+			m.refreshWorktreeRows()
+			m.wt.choosing = strings.TrimSpace(m.worktree.Value()) != ""
+			m.sizeForm()
+		}
+		m.err = ""
+		return m, cmd
+	}
+
+	if isDocField(m.field) {
+		switch k.String() {
+		case "up", "ctrl+p":
+			m.moveDocHighlight(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.moveDocHighlight(1)
+			return m, nil
+		}
+		in := &m.attachments
+		if m.field == fieldWorkingNotes {
+			in = &m.workingNotes
+		}
+		if k.Type == tea.KeyBackspace && in.Value() == "" {
+			m.removeLastDocument()
+			return m, nil
+		}
+		before := in.Value()
+		var cmd tea.Cmd
+		*in, cmd = in.Update(k)
+		if in.Value() != before {
+			m.setDocQuery(in.Value())
+		}
+		m.err = ""
+		return m, cmd
+	}
+
 	// On the Deadline field hjkl and t steer the calendar; those letters are
 	// never valid in a DD/MM/YYYY date, so both can share the keyboard.
 	if m.field == fieldDeadline {
@@ -1552,10 +1582,6 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.sizeForm() // the editor grows with its content
 	case fieldWorktree:
 		m.worktree, cmd = m.worktree.Update(k)
-	case fieldAttachments:
-		m.attachments, cmd = m.attachments.Update(k)
-	case fieldWorkingNotes:
-		m.workingNotes, cmd = m.workingNotes.Update(k)
 	case fieldDeadline:
 		m.deadline, cmd = m.deadline.Update(k)
 		m.seedPicker()
@@ -1573,7 +1599,11 @@ func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		if t, ok := m.selectedTask(); ok {
 			return m, m.startOpen(t)
 		}
-	case "y":
+	case "v":
+		if t, ok := m.selectedTask(); ok && m.inReview(t) {
+			return m.approve(t)
+		}
+	case "y": // the older approve key, kept while the gate is on
 		if t, ok := m.selectedTask(); ok && m.awaitingApproval(t) {
 			return m.approve(t)
 		}

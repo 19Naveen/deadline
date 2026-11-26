@@ -844,8 +844,7 @@ func TestDocumentFieldsRoundTripAndDetail(t *testing.T) {
 	m.SetSize(120, 40)
 	m = press(m, "a")
 	m.title.SetValue("Documents")
-	m.attachments.SetValue(`"brief, final.docx",reference.pdf`)
-	m.workingNotes.SetValue("docs/task.md,phase2.md")
+	m.doc.paths = [2][]string{{"brief, final.docx", "reference.pdf"}, {"docs/task.md", "phase2.md"}}
 	m = press(m, "enter")
 	if len(b.Tasks) != 1 || len(b.Tasks[0].Attachments) != 2 || b.Tasks[0].Attachments[0] != "brief, final.docx" || len(b.Tasks[0].WorkingNotes) != 2 {
 		t.Fatalf("document fields not saved: %+v", b.Tasks)
@@ -858,8 +857,8 @@ func TestDocumentFieldsRoundTripAndDetail(t *testing.T) {
 		}
 	}
 	m = press(m, "e")
-	if m.attachments.Value() != `"brief, final.docx",reference.pdf` {
-		t.Errorf("attachment CSV lost quoting: %q", m.attachments.Value())
+	if got := m.doc.paths[0]; len(got) != 2 || got[0] != "brief, final.docx" || m.attachments.Value() != "" {
+		t.Errorf("edit did not prefill the attachment chips: %q, query %q", got, m.attachments.Value())
 	}
 }
 
@@ -1145,8 +1144,8 @@ func TestDetailShowsSubtasksAndParentBreadcrumb(t *testing.T) {
 	}
 	if subIdx := strings.Index(parentView, "Subtasks"); subIdx < 0 {
 		t.Errorf("parent detail has no SUBTASKS section:\n%s", parentView)
-	} else if descIdx := strings.Index(parentView, "parent detail"); descIdx < subIdx {
-		t.Errorf("subtask list must come before the parent description:\n%s", parentView)
+	} else if descIdx := strings.Index(parentView, "parent detail"); descIdx > subIdx {
+		t.Errorf("the description must come before the subtask list:\n%s", parentView)
 	}
 	m = fixedClock(NewBoardModel(b))
 	m.SetSize(120, 40)

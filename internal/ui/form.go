@@ -14,9 +14,12 @@ type formLayout struct {
 	descRows int  // description editor height
 	showDesc bool // description section drawn
 	showDocs bool // Attachments / Working notes row drawn
+	showDate bool // Deadline / Worktree row drawn
+	showPar  bool // Parent row drawn
+	showRel  bool // relationships summary drawn
 	gaps     bool // one blank row between every section
 	calendar bool // deadline calendar under the fields
-	dropdown int  // parent dropdown height, 0 when closed
+	dropdown int  // focused field's dropdown height, 0 when closed
 }
 
 // formBudget is the content rows the form may use: the terminal minus the
@@ -43,15 +46,20 @@ func (m BoardModel) descWantRows() int {
 // computeFormLayout picks the richest layout that fits the terminal. Order
 // of sacrifice: description shrinks to three rows, the calendar goes, all
 // gaps go together, unfocused document fields hide, the description shrinks
-// to one row and then hides (unless focused), then the dropdown shrinks.
+// to one row and then hides (unless focused), the relationships summary
+// goes, the unfocused Deadline/Worktree and Parent rows hide, then the
+// focused field's dropdown shrinks.
 func (m BoardModel) computeFormLayout() formLayout {
 	l := formLayout{
 		descRows: m.descWantRows(),
 		showDesc: true,
 		showDocs: true,
+		showDate: true,
+		showPar:  true,
+		showRel:  true,
 		gaps:     true,
 		calendar: m.picker.open,
-		dropdown: m.parentDropdownWant(),
+		dropdown: m.dropdownWant(),
 	}
 	budget := m.formBudget()
 	fits := func() bool { return m.formHeight(l) <= budget }
@@ -76,6 +84,15 @@ func (m BoardModel) computeFormLayout() formLayout {
 	if !fits() && m.field != fieldDesc {
 		l.showDesc = false
 	}
+	if !fits() {
+		l.showRel = false
+	}
+	if !fits() && m.field != fieldDeadline && m.field != fieldWorktree {
+		l.showDate = false
+	}
+	if !fits() && m.field != fieldParent {
+		l.showPar = false
+	}
 	for l.dropdown > 0 && !fits() {
 		l.dropdown--
 	}
@@ -86,18 +103,6 @@ func (m BoardModel) computeFormLayout() formLayout {
 func (m BoardModel) formHeight(l formLayout) int {
 	return lipgloss.Height(strings.Join(m.formRowsFor(l, strings.Repeat("\n", max(l.descRows-1, 0))), "\n"))
 }
-
-// parentDropdownWant is the dropdown's natural height while Parent has
-// focus: up to parentDropdownRows options plus a heading and two borders.
-func (m BoardModel) parentDropdownWant() int {
-	if m.field != fieldParent {
-		return 0
-	}
-	return min(max(len(m.filteredParentOptions()), 1), parentDropdownRows) + 3
-}
-
-// parentDropdownHeight is the dropdown height the current layout allows.
-func (m BoardModel) parentDropdownHeight() int { return m.computeFormLayout().dropdown }
 
 // formPairWidths splits a two-field row evenly, two columns apart.
 func formPairWidths(width int) (left, right int) {
@@ -115,8 +120,10 @@ func (m *BoardModel) sizeForm() {
 	m.deadline.Width = left - 3
 	m.worktree.Width = right - 3
 	m.parent.Width = inner - 3
-	m.attachments.Width = left - 3
-	m.workingNotes.Width = right - 3
+	m.attachments.Width = m.docInputWidth(fieldAttachments, left)
+	m.workingNotes.Width = m.docInputWidth(fieldWorkingNotes, right)
+	m.attachments.Placeholder = docPlaceholder(m.attachments.Width)
+	m.workingNotes.Placeholder = docPlaceholder(m.workingNotes.Width)
 	m.desc.SetWidth(inner)
 	m.desc.SetHeight(max(m.computeFormLayout().descRows, 1))
 }
@@ -153,20 +160,31 @@ func (m BoardModel) formRowsFor(l formLayout, desc string) []string {
 		add(m.formLabelFor(fieldDesc, "Description", "Markdown", width), desc)
 	}
 	left, right := formPairWidths(width)
-	add(m.formPair(fieldDeadline, "Deadline", "dd/mm/yyyy · hjkl calendar", m.deadline,
-		fieldWorktree, "Worktree", "path or branch", m.worktree, left, right))
-	parent := []string{m.formLabelFor(fieldParent, "Parent", "type to filter", width), m.parentView(width)}
-	if l.dropdown > 0 {
-		if dropdown := m.renderParentDropdownSized(width, l.dropdown); dropdown != "" {
-			parent = append(parent, dropdown)
+	// withDropdown hangs the focused field's dropdown under its section.
+	withDropdown := func(field int, rows ...string) []string {
+		if m.field == field || (isDocField(field) && isDocField(m.field)) {
+			if dd := m.renderFieldDropdown(width, l.dropdown); l.dropdown > 0 && dd != "" {
+				rows = append(rows, dd)
+			}
 		}
+		return rows
 	}
-	add(parent...)
+	wtHint := "path or branch"
+	if m.wt.repo {
+		wtHint = "type to search"
+	}
+	if l.showDate {
+		add(withDropdown(fieldWorktree, m.formPair(fieldDeadline, "Deadline", "dd/mm/yyyy · hjkl calendar", m.formInput(m.deadline, fieldDeadline, left),
+			fieldWorktree, "Worktree", wtHint, m.formInput(m.worktree, fieldWorktree, right), left, right))...)
+	}
+	if l.showPar {
+		add(withDropdown(fieldParent, m.formLabelFor(fieldParent, "Parent", "type to filter", width), m.parentView(width))...)
+	}
 	if l.showDocs {
-		add(m.formPair(fieldAttachments, "Attachments", "comma-separated", m.attachments,
-			fieldWorkingNotes, "Working notes", "comma-separated", m.workingNotes, left, right))
+		add(withDropdown(fieldAttachments, m.formPair(fieldAttachments, "Attachments", "type to search", m.docFieldView(fieldAttachments, left),
+			fieldWorkingNotes, "Working notes", "type to search", m.docFieldView(fieldWorkingNotes, right), left, right))...)
 	}
-	if rel := m.formRelationships(width); len(rel) > 0 {
+	if rel := m.formRelationships(width); l.showRel && len(rel) > 0 {
 		add(rel[1:]...) // drop its own leading blank; the gap rule spaces it
 	}
 
@@ -196,12 +214,13 @@ func (m BoardModel) formLabelFor(field int, label, hint string, width int) strin
 	return formLabel(field, m.field, label, hint, width)
 }
 
-// formPair renders two fields side by side on an even grid.
-func (m BoardModel) formPair(lf int, ll, lh string, lin textinput.Model, rf int, rl, rh string, rin textinput.Model, lw, rw int) string {
+// formPair renders two fields side by side on an even grid; lv and rv are
+// the rendered values under each label.
+func (m BoardModel) formPair(lf int, ll, lh, lv string, rf int, rl, rh, rv string, lw, rw int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(lw).Render(m.formLabelFor(lf, ll, lh, lw)+"\n"+m.formInput(lin, lf, lw)),
+		lipgloss.NewStyle().Width(lw).MaxWidth(lw).Render(m.formLabelFor(lf, ll, lh, lw)+"\n"+lv),
 		"  ",
-		lipgloss.NewStyle().Width(rw).Render(m.formLabelFor(rf, rl, rh, rw)+"\n"+m.formInput(rin, rf, rw)))
+		lipgloss.NewStyle().Width(rw).MaxWidth(rw).Render(m.formLabelFor(rf, rl, rh, rw)+"\n"+rv))
 }
 
 // formInput is the live input while focused. Unfocused, it shows the start
@@ -243,6 +262,12 @@ func (m BoardModel) formHints() []string {
 		hints = append(hints, keyHint("ctrl+j", "New line"))
 	case fieldParent:
 		hints = append(hints, keyHint("↑↓", "Choose"))
+	case fieldWorktree:
+		if m.wt.repo {
+			hints = append(hints, keyHint("↑↓", "Choose"))
+		}
+	case fieldAttachments, fieldWorkingNotes:
+		hints = append(hints, keyHint("↑↓", "Choose"), keyHint("enter", "Add"), keyHint("⌫", "Remove"))
 	}
 	return append(hints, keyHint("tab", "Next"), keyHint("shift+tab", "Back"),
 		keyHint("enter", "Save"), keyHint("esc", "Cancel"))

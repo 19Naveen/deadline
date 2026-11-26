@@ -96,8 +96,11 @@ func (m BoardModel) agentProps(t task.Task, width int) []string {
 	if l := labelList(t.Labels); l != "" {
 		rows = append(rows, propRow("Labels", truncate(l, width-propKeyWidth), width))
 	}
-	if m.awaitingApproval(t) {
-		rows = append(rows, propRow("Approval", statusTag("awaiting approval")+MutedStyle.Render("  y to ship"), width))
+	switch {
+	case m.awaitingApproval(t):
+		rows = append(rows, propRow("Approval", statusTag("awaiting approval")+MutedStyle.Render("  v to ship"), width))
+	case m.inReview(t):
+		rows = append(rows, propRow("Review", statusTag("ready to verify")+MutedStyle.Render("  v to ship"), width))
 	}
 	for i, id := range t.BlockedBy {
 		key := ""
@@ -159,11 +162,16 @@ func (m BoardModel) reviewStatus() task.Status {
 	return cols[0]
 }
 
+// inReview reports whether t sits in the review column, ready for a human
+// to verify and ship with v.
+func (m BoardModel) inReview(t task.Task) bool {
+	return !t.Archived && t.Status == m.reviewStatus() && m.reviewStatus() != m.board.DoneStatus()
+}
+
 // awaitingApproval reports whether t sits in review on a board that needs a
 // human to ship it.
 func (m BoardModel) awaitingApproval(t task.Task) bool {
-	return m.board.RequireApproval && !t.Archived && t.Status == m.reviewStatus() &&
-		m.reviewStatus() != m.board.DoneStatus()
+	return m.board.RequireApproval && m.inReview(t)
 }
 
 // columnHeader is the column title with its count: "(n)", "(shown/total)"
