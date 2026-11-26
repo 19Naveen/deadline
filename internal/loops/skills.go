@@ -55,9 +55,24 @@ func installedSkillsIn(agent, home, configHome string) []string {
 		matches, _ := filepath.Glob(g)
 		dirs = append(dirs, matches...)
 	}
-	seen := map[string]bool{}
+	return skillNames(dirs)
+}
+
+// skillNames lists the skills in dirs (up to two levels down), sorted and
+// deduplicated.
+func skillNames(dirs []string) []string {
+	lists := make([][]string, 0, len(dirs))
 	for _, dir := range dirs {
-		for _, name := range skillsUnder(dir, 2) {
+		lists = append(lists, skillsUnder(dir, 2))
+	}
+	return mergeNames(lists...)
+}
+
+// mergeNames merges name lists, sorted and deduplicated.
+func mergeNames(lists ...[]string) []string {
+	seen := map[string]bool{}
+	for _, l := range lists {
+		for _, name := range l {
 			seen[name] = true
 		}
 	}
@@ -67,6 +82,45 @@ func installedSkillsIn(agent, home, configHome string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// projectSkillDirs lists where agent loads skills from inside a project.
+func projectSkillDirs(agent, root string) []string {
+	j := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
+	switch agent {
+	case "claude":
+		return []string{j(".claude", "skills")}
+	case "codex":
+		return []string{j(".agents", "skills"), j(".codex", "skills")}
+	case "opencode":
+		return []string{j(".opencode", "skills"), j(".claude", "skills"), j(".agents", "skills")}
+	}
+	return nil
+}
+
+// ProjectSkills lists the skills agent loads from the project at root,
+// sorted and deduplicated; none when root is empty.
+func ProjectSkills(agent, root string) []string {
+	if root == "" {
+		return nil
+	}
+	return skillNames(projectSkillDirs(agent, root))
+}
+
+// InstalledSkillsFor is InstalledSkills plus the skills of the project at
+// projectRoot (empty for none), sorted and deduplicated.
+func InstalledSkillsFor(agent, projectRoot string) []string {
+	return mergeNames(InstalledSkills(agent), ProjectSkills(agent, projectRoot))
+}
+
+// SkillsIn lists the skills in a skill pack folder: the folder itself when
+// it holds SKILL.md, plus skill folders up to two levels below it.
+func SkillsIn(dir string) []string {
+	var out []string
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err == nil {
+		out = append(out, filepath.Base(dir))
+	}
+	return mergeNames(out, skillsUnder(dir, 2))
 }
 
 // skillsUnder finds directories containing SKILL.md up to depth levels down.
@@ -90,14 +144,23 @@ func skillsUnder(dir string, depth int) []string {
 	return out
 }
 
-// HasSkill reports whether agent can load skill. Plugin skills may be
-// addressed with a namespace ("pstack:poteto-mode"); the part after the
-// last colon is matched.
+// HasSkill reports whether agent can load skill from the user's skill
+// directories and plugins. Plugin skills may be addressed with a namespace
+// ("pstack:poteto-mode"); the part after the last colon is matched.
 func HasSkill(agent, skill string) bool {
+	return hasSkillName(InstalledSkills(agent), skill)
+}
+
+// HasSkillIn is HasSkill that also looks in the project at projectRoot.
+func HasSkillIn(agent, skill, projectRoot string) bool {
+	return HasSkill(agent, skill) || hasSkillName(ProjectSkills(agent, projectRoot), skill)
+}
+
+func hasSkillName(names []string, skill string) bool {
 	if i := strings.LastIndex(skill, ":"); i >= 0 {
 		skill = skill[i+1:]
 	}
-	for _, s := range InstalledSkills(agent) {
+	for _, s := range names {
 		if s == skill {
 			return true
 		}

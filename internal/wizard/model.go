@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"gotodo/internal/agentsetup"
 	"gotodo/internal/loops"
@@ -26,7 +28,8 @@ const (
 	scrApply
 )
 
-// crumbs are the steps in the header; existing-config counts as Stages.
+// crumbs are the steps in the header's stepper; existing-config counts as
+// Stages and Apply comes after the last step.
 var crumbs = []struct {
 	label string
 	scr   []screen
@@ -37,7 +40,6 @@ var crumbs = []struct {
 	{"Packs", []screen{scrPacks}},
 	{"Stages", []screen{scrExisting, scrStages}},
 	{"Summary", []screen{scrSummary}},
-	{"Apply", []screen{scrApply}},
 }
 
 // Stage table columns.
@@ -48,6 +50,7 @@ const (
 	colSkill
 	colPerm
 	numCols
+	fieldSource // the pack source input on the packs screen
 )
 
 type packState int
@@ -63,6 +66,21 @@ type packCell struct {
 	State       packState
 }
 
+// packItem is one cursor stop on the packs screen: a missing built-in pack
+// cell, one agent of a custom pack, or the add row.
+type packItem struct {
+	kind   int
+	cell   int    // itemCell: index into cells
+	custom int    // itemCustom: index into customs
+	agent  string // itemCustom
+}
+
+const (
+	itemCell = iota
+	itemCustom
+	itemAdd
+)
+
 type existingConfig struct {
 	Mod    time.Time
 	Stages []string
@@ -72,6 +90,7 @@ type existingConfig struct {
 // Model is the wizard's Bubble Tea model.
 type Model struct {
 	d Deps
+	theme
 
 	width, height int
 	scr           screen
@@ -80,7 +99,8 @@ type Model struct {
 
 	detected []string
 	paths    map[string]string
-	skills   map[string][]string
+	skills   map[string][]string        // user + project skills per agent
+	proj     map[string]map[string]bool // project skills per agent
 	npx      bool
 
 	mcpOn map[string]bool
@@ -90,6 +110,9 @@ type Model struct {
 
 	cells   []packCell
 	checked map[string]bool
+	customs []customPack
+	src     *editor // pack source input, open on the packs screen
+	srcErr  string
 
 	existing *existingConfig
 	replace  bool
@@ -99,8 +122,10 @@ type Model struct {
 	rowsTouched bool
 	edit        *editor
 	errMsg      string
+	flash       string // one-shot warning, cleared by the next key
 
 	steps     []step
+	spin      spinner.Model
 	finished  bool
 	appliedAt time.Time
 	quit      bool
@@ -108,18 +133,32 @@ type Model struct {
 
 // New builds the wizard, detecting agents, skills and an existing config.
 func New(d Deps, o Options) Model {
+	if d.Cwd == "" {
+		d.Cwd = d.Home
+	}
 	m := Model{
 		d:       d,
+		theme:   theme{plain: d.NoColor},
 		cur:     map[screen]int{},
 		skills:  map[string][]string{},
+		proj:    map[string]map[string]bool{},
 		mcpOn:   map[string]bool{},
 		checked: map[string]bool{},
+		spin:    spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(amberStyle)),
 	}
 	m.detected, m.paths = detectAgents(d.LookPath)
 	_, err := d.LookPath("npx")
 	m.npx = err == nil
 	for _, a := range m.detected {
-		m.skills[a] = d.Skills(a)
+		var proj []string
+		if d.ProjectSkills != nil {
+			proj = d.ProjectSkills(a)
+		}
+		m.proj[a] = map[string]bool{}
+		for _, s := range proj {
+			m.proj[a][s] = true
+		}
+		m.skills[a] = union(d.Skills(a), proj)
 		m.mcpOn[a] = true
 		for _, p := range Packs {
 			c := packCell{Pack: p, Agent: a}
@@ -154,7 +193,8 @@ func New(d Deps, o Options) Model {
 // Init starts nothing; the wizard waits for keys.
 func (m Model) Init() tea.Cmd { return nil }
 
-// available is what an agent can load now plus what chosen packs bring.
+// available is what an agent can load now (user and project skills) plus
+// what the chosen packs bring.
 func (m Model) available(agent string) []string {
 	lists := [][]string{m.skills[agent]}
 	for _, p := range Packs {
@@ -162,7 +202,21 @@ func (m Model) available(agent string) []string {
 			lists = append(lists, packProvides[p])
 		}
 	}
+	for _, c := range m.customs {
+		if c.Agents[agent] {
+			lists = append(lists, c.Skills)
+		}
+	}
 	return union(lists...)
+}
+
+// installed reports whether agent can load skill once the chosen packs are
+// in; a plugin namespace ("pstack:poteto-mode") is ignored.
+func (m Model) installed(agent, skill string) bool {
+	if i := strings.LastIndex(skill, ":"); i >= 0 {
+		skill = skill[i+1:]
+	}
+	return contains(m.available(agent), skill)
 }
 
 // writeConfig reports whether apply writes loops.json.
@@ -170,12 +224,23 @@ func (m Model) writeConfig() bool {
 	return m.loops && len(m.detected) > 0 && (m.existing == nil || m.replace)
 }
 
-// Update handles keys, window size and finished apply steps.
+func (m Model) installUnits() []installUnit {
+	return units(m.checked, m.detected, m.d.Home, m.customs)
+}
+
+// Update handles keys, window size, spinner ticks and finished apply steps.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case spinner.TickMsg:
+		if m.scr != scrApply || m.finished {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case stepDoneMsg:
 		return m.stepDone(msg)
 	case tea.KeyMsg:
@@ -190,6 +255,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quit = true
 		return m, tea.Quit
 	}
+	m.flash = ""
 	if m.edit != nil {
 		done, commit := m.edit.update(msg)
 		if done {
@@ -206,6 +272,9 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.edit = nil
 		}
 		return m, nil
+	}
+	if m.src != nil {
+		return m.sourceKey(msg)
 	}
 	if m.scr == scrApply {
 		if m.finished && (k == "enter" || k == "q" || k == "esc") {
@@ -228,6 +297,10 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		return m, nil
 	case "enter":
+		if m.scr == scrPacks && m.onAddRow() {
+			m.openSource()
+			return m, nil
+		}
 		return m.next()
 	}
 	switch m.scr {
@@ -242,8 +315,15 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cur[scrLoops] = 0
 		}
 	case scrPacks:
-		offer := m.offered()
-		m.list(k, len(offer), func(i int) { m.togglePack(offer[i]) })
+		m.srcErr = ""
+		items := m.packItems()
+		m.list(k, len(items), func(i int) { m.togglePackItem(items[i]) })
+		if (k == "d" || k == "delete" || k == "backspace") && m.cur[scrPacks] < len(items) {
+			if it := items[m.cur[scrPacks]]; it.kind == itemCustom {
+				m.customs = append(m.customs[:it.custom:it.custom], m.customs[it.custom+1:]...)
+				m.cur[scrPacks] = min(m.cur[scrPacks], len(m.packItems())-1)
+			}
+		}
 	case scrExisting:
 		m.list(k, 2, nil)
 	case scrStages:
@@ -283,6 +363,59 @@ func (m Model) offered() []int {
 	return out
 }
 
+// packItems are the packs screen's cursor stops in display order.
+func (m Model) packItems() []packItem {
+	var items []packItem
+	for _, i := range m.offered() {
+		items = append(items, packItem{kind: itemCell, cell: i})
+	}
+	for ci := range m.customs {
+		for _, a := range m.detected {
+			items = append(items, packItem{kind: itemCustom, custom: ci, agent: a})
+		}
+	}
+	return append(items, packItem{kind: itemAdd})
+}
+
+func (m Model) packItem() (packItem, bool) {
+	items := m.packItems()
+	if i := m.cur[scrPacks]; i < len(items) {
+		return items[i], true
+	}
+	return packItem{}, false
+}
+
+func (m Model) onAddRow() bool {
+	it, ok := m.packItem()
+	return ok && it.kind == itemAdd
+}
+
+func (m *Model) togglePackItem(it packItem) {
+	switch it.kind {
+	case itemCell:
+		m.togglePack(it.cell)
+	case itemCustom:
+		c := m.customs[it.custom]
+		on := !c.Agents[it.agent]
+		agents := map[string]bool{}
+		for a, v := range c.Agents {
+			agents[a] = v
+		}
+		agents[it.agent] = on
+		if sharedAgents[it.agent] { // one shared install covers both
+			for _, a := range m.detected {
+				if sharedAgents[a] {
+					agents[a] = on
+				}
+			}
+		}
+		m.customs = append([]customPack(nil), m.customs...)
+		m.customs[it.custom].Agents = agents
+	case itemAdd:
+		m.openSource()
+	}
+}
+
 // togglePack flips one cell; shared mattpocock cells move together since
 // one install covers both agents.
 func (m *Model) togglePack(i int) {
@@ -293,6 +426,48 @@ func (m *Model) togglePack(i int) {
 			m.checked[cellKey(o.Pack, o.Agent)] = on
 		}
 	}
+}
+
+func (m *Model) openSource() {
+	if !m.npx {
+		m.srcErr = "adding a pack needs npx: install Node.js, then run gotodo setup again"
+		return
+	}
+	m.srcErr = ""
+	m.src = newEditor(fieldSource, "Source", "", "owner/repo, https://… or ./folder", nil)
+	m.src.hint = "GitHub owner/repo, a git or https URL, or a folder with SKILL.md"
+}
+
+// sourceKey edits the pack source; enter validates and adds the pack for
+// every detected agent, esc cancels.
+func (m Model) sourceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	done, commit := m.src.update(msg)
+	if !done {
+		m.srcErr = ""
+		return m, nil
+	}
+	if commit {
+		c, err := parseSource(m.src.value(), m.d.Cwd, m.d.Home)
+		if err == nil {
+			for _, o := range m.customs {
+				if o.Source == c.Source {
+					err = fmt.Errorf("%s is already in the list", c.Label)
+				}
+			}
+		}
+		if err != nil {
+			m.srcErr = err.Error()
+			return m, nil
+		}
+		c.Agents = map[string]bool{}
+		for _, a := range m.detected {
+			c.Agents[a] = true
+		}
+		m.customs = append(append([]customPack(nil), m.customs...), c)
+		m.cur[scrPacks] = len(m.packItems()) - 1 // stay on the add row
+	}
+	m.src, m.srcErr = nil, ""
+	return m, nil
 }
 
 func (m *Model) stagesKey(k string) {
@@ -348,9 +523,17 @@ func (m *Model) change(row, col int) {
 		return
 	case colSkill:
 		m.edit = newEditor(colSkill, "Skill for "+r.Name, r.Skill, "type or pick a skill", m.available(r.Agent))
+		m.edit.hint = "not installed for " + r.Agent + ": loops will skip until it is"
+		m.edit.tags = map[string]string{}
+		for s := range m.proj[r.Agent] {
+			m.edit.tags[s] = "project"
+		}
 		return
 	case colPerm:
 		r.Perm = cycle(loops.Permissions, r.Perm)
+		if r.Perm == loops.PermFull {
+			m.flash = r.Name + " now has full access: it skips every permission prompt, unattended"
+		}
 	}
 	m.rowsTouched = true
 }
@@ -470,349 +653,6 @@ func (m Model) Report() []string {
 
 const restartNote = "Restart open agent sessions to load the gotodo MCP server and new skills."
 
-// ---- view ----
-
-func (m Model) size() (int, int) {
-	w, h := m.width, m.height
-	if w <= 0 {
-		w = 80
-	}
-	if h <= 0 {
-		h = 24
-	}
-	if w > 100 {
-		w = 100
-	}
-	return w, h
-}
-
-// View renders header, panel and footer, with the footer pinned to the
-// bottom and the panel body clipped so nothing overflows the terminal.
-func (m Model) View() string {
-	if m.quit {
-		return ""
-	}
-	w, h := m.size()
-	inner := w - 4
-	header := m.header(w)
-	footer := hintBar(w, m.hints()...)
-	room := h - lipgloss.Height(header) - 1 - 2 - 1 - lipgloss.Height(footer)
-	if room < 1 {
-		room = 1
-	}
-	lines := strings.Split(m.body(inner), "\n")
-	if len(lines) > room {
-		lines = lines[:room]
-	}
-	for i, l := range lines {
-		if lipgloss.Width(l) > inner {
-			lines[i] = lipgloss.NewStyle().MaxWidth(inner).Render(l)
-		}
-	}
-	panel := panelStyle.Width(w - 2).Render(strings.Join(lines, "\n"))
-	gap := h - lipgloss.Height(header) - 1 - lipgloss.Height(panel) - lipgloss.Height(footer)
-	if gap < 1 {
-		gap = 1
-	}
-	return header + "\n\n" + panel + strings.Repeat("\n", gap) + footer
-}
-
-func (m Model) header(w int) string {
-	parts := make([]string, 0, len(crumbs))
-	for _, c := range crumbs {
-		active := false
-		for _, s := range c.scr {
-			active = active || s == m.scr
-		}
-		if active {
-			parts = append(parts, accentStyle.Render(c.label))
-		} else {
-			parts = append(parts, mutedStyle.Render(c.label))
-		}
-	}
-	line := titleStyle.Render("gotodo setup") + "   " + strings.Join(parts, mutedStyle.Render(" · "))
-	return lipgloss.NewStyle().MaxWidth(w).Render(line)
-}
-
-func (m Model) hints() []string {
-	if m.edit != nil {
-		return []string{keyHint("tab", "Suggestion"), keyHint("enter", "Use"), keyHint("esc", "Cancel")}
-	}
-	switch m.scr {
-	case scrWelcome:
-		return []string{keyHint("enter", "Next"), keyHint("q", "Quit")}
-	case scrMCP, scrPacks:
-		return []string{keyHint("↑↓", "Move"), keyHint("space", "Toggle"), keyHint("enter", "Next"), keyHint("esc", "Back")}
-	case scrLoops, scrExisting:
-		return []string{keyHint("↑↓", "Choose"), keyHint("enter", "Next"), keyHint("esc", "Back")}
-	case scrStages:
-		return []string{keyHint("↑↓", "Stage"), keyHint("←→", "Field"), keyHint("space", "Change"), keyHint("enter", "Next"), keyHint("esc", "Back")}
-	case scrSummary:
-		return []string{keyHint("enter", "Apply"), keyHint("esc", "Back"), keyHint("q", "Quit")}
-	case scrApply:
-		if m.finished {
-			return []string{keyHint("enter", "Quit")}
-		}
-		return []string{keyHint("ctrl+c", "Abort")}
-	}
-	return nil
-}
-
-func (m Model) body(w int) string {
-	switch m.scr {
-	case scrWelcome:
-		return m.welcomeView()
-	case scrMCP:
-		return m.mcpView()
-	case scrLoops:
-		return m.loopsView()
-	case scrPacks:
-		return m.packsView()
-	case scrExisting:
-		return m.existingView()
-	case scrStages:
-		return m.stagesView(w)
-	case scrSummary:
-		return m.summaryView(w)
-	case scrApply:
-		return m.applyView(w)
-	}
-	return ""
-}
-
-func check(on bool) string {
-	if on {
-		return accentStyle.Render("[x]")
-	}
-	return mutedStyle.Render("[ ]")
-}
-
-func radio(on bool) string {
-	if on {
-		return accentStyle.Render("●")
-	}
-	return mutedStyle.Render("○")
-}
-
-func (m Model) welcomeView() string {
-	b := []string{
-		textStyle.Render("Set up gotodo for the coding agents on this machine."),
-		"",
-		"  • Register the gotodo MCP server, so agents can read and move cards",
-		"  • Optionally turn on stage loops: agents start when cards change column",
-		"  • Optionally install the pstack and mattpocock skill packs",
-		"",
-		headStyle.Render("Agents found"),
-	}
-	for _, a := range loops.Agents {
-		if p, ok := m.paths[a]; ok {
-			b = append(b, "  "+okStyle.Render("✓")+" "+pad(a, 10)+mutedStyle.Render(tilde(p, m.d.Home)))
-		} else {
-			b = append(b, "  "+errorStyle.Render("✗")+" "+pad(a, 10)+mutedStyle.Render("not found"))
-		}
-	}
-	return strings.Join(append(b, "", mutedStyle.Render("Nothing changes until you confirm on the summary screen.")), "\n")
-}
-
-var mcpWhere = map[string]string{
-	"claude":   "Claude Code, user scope via claude mcp add",
-	"codex":    "Codex, ~/.codex/config.toml",
-	"opencode": "OpenCode, ~/.config/opencode/opencode.json",
-}
-
-func (m Model) mcpView() string {
-	if len(m.detected) == 0 {
-		return strings.Join([]string{
-			errorLine("No coding agent CLI found on PATH (claude, codex, opencode)."),
-			"",
-			"Install one, then run gotodo setup again.",
-		}, "\n")
-	}
-	b := []string{textStyle.Render("Register the gotodo MCP server with:"), ""}
-	for i, a := range m.detected {
-		b = append(b, cursorBar(i == m.cur[scrMCP])+check(m.mcpOn[a])+" "+pad(a, 10)+mutedStyle.Render(mcpWhere[a]))
-	}
-	return strings.Join(append(b, "",
-		mutedStyle.Render("Agents load it on their next start. Unticked agents are left as they are.")), "\n")
-}
-
-func (m Model) loopsView() string {
-	sel := m.cur[scrLoops]
-	return strings.Join([]string{
-		textStyle.Render("Start an agent automatically when a card moves?"),
-		"",
-		"When a card enters a column, gotodo starts an agent with a skill on it.",
-		"Loops run unattended and spend tokens; change them later with gotodo loops.",
-		"",
-		cursorBar(sel == 0) + radio(sel == 0) + " No, just the MCP server",
-		cursorBar(sel == 1) + radio(sel == 1) + " Yes, set up stage loops",
-	}, "\n")
-}
-
-func (m Model) packsView() string {
-	b := []string{
-		textStyle.Render("Skill packs give loops their skills. Packs already present are not offered."),
-		"",
-		"  " + headStyle.Render(pad("", 12)+pad("pstack", 24)+"mattpocock"),
-	}
-	offer := m.offered()
-	curCell := -1
-	if i := m.cur[scrPacks]; i < len(offer) {
-		curCell = offer[i]
-	}
-	needsNpx := false
-	for _, a := range m.detected {
-		line := pad(a, 12)
-		rowCur := false
-		for i, c := range m.cells {
-			if c.Agent != a {
-				continue
-			}
-			var cell string
-			switch c.State {
-			case packInstalled:
-				cell = okStyle.Render("✓") + mutedStyle.Render(" installed")
-			case packNeedsNpx:
-				cell = amberStyle.Render("!") + mutedStyle.Render(" needs npx")
-				needsNpx = true
-			default:
-				label := " install"
-				if i == curCell {
-					rowCur = true
-					label = cellStyle.Render(label[1:])
-					cell = check(m.checked[cellKey(c.Pack, a)]) + " " + label
-				} else {
-					cell = check(m.checked[cellKey(c.Pack, a)]) + mutedStyle.Render(label)
-				}
-			}
-			if c.Pack == PackPstack {
-				cell += strings.Repeat(" ", max(0, 24-lipgloss.Width(cell)))
-			}
-			line += cell
-		}
-		b = append(b, cursorBar(rowCur)+line)
-	}
-	if len(offer) == 0 {
-		b = append(b, "", okStyle.Render("Every detected agent already has both packs."))
-	}
-	b = append(b, "",
-		mutedStyle.Render(pad("pstack", 11)+packSource[PackPstack]),
-		mutedStyle.Render(pad("mattpocock", 11)+packSource[PackMattpocock]),
-		mutedStyle.Render("mattpocock for Codex and OpenCode is one shared install in ~/.agents/skills."))
-	if needsNpx {
-		b = append(b, amberStyle.Render("! npx not found: install Node.js, then rerun gotodo setup for mattpocock."))
-	}
-	return strings.Join(b, "\n")
-}
-
-func (m Model) existingView() string {
-	ex := m.existing
-	sel := m.cur[scrExisting]
-	info := "modified " + ex.Mod.Format("02/01/2006 15:04")
-	stages := "stages: " + strings.Join(ex.Stages, ", ")
-	if len(ex.Stages) == 0 {
-		stages = "no stages"
-	}
-	if ex.Err != nil {
-		stages = errorStyle.Render("unreadable: " + trunc(ex.Err.Error(), 60))
-	}
-	return strings.Join([]string{
-		textStyle.Render("Existing config found."),
-		"",
-		"  " + tilde(m.d.ConfigPath, m.d.Home) + mutedStyle.Render(" · "+info),
-		"  " + stages,
-		"",
-		cursorBar(sel == 0) + radio(sel == 0) + " Keep it, leave the file untouched",
-		cursorBar(sel == 1) + radio(sel == 1) + " Replace it with the stages set up next",
-	}, "\n")
-}
-
-// stage table column widths: stage, on, agent, model, skill, access.
-var colW = []int{15, 4, 10, 19, 17, 9}
-
-func (m Model) stagesView(w int) string {
-	row, col := m.cur[scrStages], m.stageCol
-	b := []string{
-		textStyle.Render("When a card enters a column, run:"),
-		"  " + headStyle.Render(pad("Stage", colW[0])+pad("On", colW[1])+pad("Agent", colW[2])+
-			pad("Model", colW[3])+pad("Skill", colW[4])+"Access"),
-	}
-	for i, r := range m.rows {
-		cell := func(c int, text string, base lipgloss.Style) string {
-			t := trunc(text, colW[c]-1)
-			gap := strings.Repeat(" ", colW[c]-lipgloss.Width(t))
-			if i == row && c == col+1 {
-				return cellStyle.Render(t) + gap
-			}
-			if !r.On && c > 1 {
-				base = mutedStyle
-			}
-			return base.Render(t) + gap
-		}
-		on, onStyle := "·", mutedStyle
-		if r.On {
-			on, onStyle = "✓", okStyle
-		}
-		model, modelStyle := r.Model, textStyle
-		if model == "" {
-			model, modelStyle = "default", mutedStyle
-		}
-		skill, skillStyle := r.Skill, textStyle
-		if skill == "" {
-			skill, skillStyle = "pick one", amberStyle
-		}
-		permStyle := textStyle
-		if r.Perm == loops.PermFull {
-			permStyle = errorStyle
-		}
-		b = append(b, cursorBar(i == row)+textStyle.Render(pad(r.Name, colW[0]))+
-			cell(1, on, onStyle)+cell(2, r.Agent, textStyle)+cell(3, model, modelStyle)+
-			cell(4, skill, skillStyle)+cell(5, r.Perm, permStyle))
-	}
-	b = append(b, mutedStyle.Render("Personal boards use doing/done: set those with gotodo loops set."), "")
-	switch {
-	case m.edit != nil:
-		b = append(b, m.edit.view(w))
-	case m.errMsg != "":
-		b = append(b, errorLine(m.errMsg))
-	default:
-		b = append(b, mutedStyle.Render(m.fieldHelp(row, col)))
-	}
-	for _, r := range m.rows {
-		if r.On && r.Perm == loops.PermFull {
-			b = append(b, errorLine(r.Name+" has full access: it skips every permission prompt, unattended"))
-			break
-		}
-	}
-	return strings.Join(b, "\n")
-}
-
-func (m Model) fieldHelp(row, col int) string {
-	if row >= len(m.rows) {
-		return ""
-	}
-	r := m.rows[row]
-	switch col {
-	case colOn:
-		return "space turns " + r.Name + " on or off"
-	case colAgent:
-		return "space cycles the detected agents: " + strings.Join(m.detected, ", ")
-	case colModel:
-		switch r.Agent {
-		case "claude":
-			return "space edits: " + strings.Join(ModelSuggestions["claude"], ", ")
-		case "codex":
-			return "space edits; blank uses codex's default model"
-		}
-		return "space edits: provider/model, blank uses opencode's default"
-	case colSkill:
-		return fmt.Sprintf("space picks from %d skills %s can load, or type your own", len(m.available(r.Agent)), r.Agent)
-	case colPerm:
-		return "readonly: read + gotodo · edits: change files (default) · full: no prompts"
-	}
-	return ""
-}
-
 func (m Model) mcpChosen() []string {
 	var out []string
 	for _, a := range m.detected {
@@ -821,101 +661,6 @@ func (m Model) mcpChosen() []string {
 		}
 	}
 	return out
-}
-
-func (m Model) summaryView(w int) string {
-	label := func(s string) string { return headStyle.Render(pad(s, 13)) }
-	mcp := strings.Join(m.mcpChosen(), ", ")
-	if mcp == "" {
-		mcp = mutedStyle.Render("none")
-	}
-	b := []string{label("MCP server") + mcp}
-	packs, shared := m.packLines()
-	if len(packs) == 0 {
-		packs = []string{mutedStyle.Render("none")}
-	}
-	for i, p := range packs {
-		l := label("")
-		if i == 0 {
-			l = label("Skill packs")
-		}
-		b = append(b, l+p)
-	}
-	path := tilde(m.d.ConfigPath, m.d.Home)
-	review := false
-	switch {
-	case !m.loops:
-		b = append(b, label("Loops")+mutedStyle.Render("off, "+path+" not touched"))
-	case !m.writeConfig():
-		b = append(b, label("Loops")+"keep existing "+path)
-	default:
-		verb := "write "
-		if m.existing != nil {
-			verb = "replace "
-		}
-		b = append(b, label("Loops")+verb+path,
-			label("")+mutedStyle.Render(fmt.Sprintf("max_parallel %d · max_runs_per_task %d",
-				loops.DefaultMaxParallel, loops.DefaultMaxRunsPerTask)))
-		// Warning before the table so a clipped view never hides it.
-		for _, r := range m.rows {
-			if r.On && r.Perm == loops.PermFull {
-				b = append(b, errorLine("full access skips every permission prompt; the agent runs unattended"))
-				break
-			}
-		}
-		for _, r := range m.rows {
-			if !r.On {
-				continue
-			}
-			model := r.Model
-			if model == "" {
-				model = "default"
-			}
-			perm := r.Perm
-			if perm == loops.PermFull {
-				perm = errorStyle.Render(perm)
-			}
-			review = review || (r.Name == "testing-review" && r.Perm == loops.PermEdits)
-			b = append(b, "  "+pad(r.Name, colW[0])+pad(r.Agent, colW[2])+pad(model, colW[3])+pad(r.Skill, colW[4])+perm)
-		}
-	}
-	if shared || m.sharedPresent() {
-		b = append(b, mutedStyle.Render("Update mattpocock later with: npx skills update -g"))
-	}
-	if review {
-		b = append(b, mutedStyle.Render("testing-review uses edits so the reviewer can run gotodo to move the card."))
-	}
-	return strings.Join(b, "\n")
-}
-
-// packLines is one summary line per chosen pack, and whether the shared
-// mattpocock install is among them.
-func (m Model) packLines() (lines []string, shared bool) {
-	byPack := map[string][]string{}
-	for _, u := range units(m.checked, m.detected, m.d.Home) {
-		a := strings.Join(u.Agents, ", ")
-		if u.Needs != "" {
-			shared = true
-			a += mutedStyle.Render(" (one shared install)")
-		}
-		byPack[u.Pack] = append(byPack[u.Pack], a)
-	}
-	for _, p := range Packs {
-		if len(byPack[p]) > 0 {
-			lines = append(lines, p+" → "+strings.Join(byPack[p], ", "))
-		}
-	}
-	return lines, shared
-}
-
-// sharedPresent reports whether mattpocock already sits in ~/.agents/skills.
-func (m Model) sharedPresent() bool {
-	for _, c := range m.cells {
-		if isShared(c.Pack, c.Agent) && c.State == packInstalled {
-			return true
-		}
-	}
-	return false
 }
 
 // ---- apply ----
@@ -932,8 +677,11 @@ const (
 
 type step struct {
 	Label  string
+	Group  string // "mcp", "pack" or "loops", for the done screen
 	State  stepState
 	Detail string
+	Took   time.Duration
+	start  time.Time
 	run    func() (stepState, string)
 }
 
@@ -951,13 +699,14 @@ type stepDoneMsg struct {
 	detail string
 }
 
+var agentNames = map[string]string{"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
+
 func (m Model) buildSteps() []step {
 	var steps []step
-	agentNames := map[string]string{"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
 	for _, a := range m.mcpChosen() {
 		a := a
 		env := m.d.MCP
-		steps = append(steps, step{Label: "MCP · " + agentNames[a], run: func() (stepState, string) {
+		steps = append(steps, step{Label: "MCP · " + agentNames[a], Group: "mcp", run: func() (stepState, string) {
 			res := agentsetup.InstallFor(env, []string{a})
 			if len(res) == 0 {
 				return stepSkipped, "unknown agent"
@@ -976,24 +725,24 @@ func (m Model) buildSteps() []step {
 			return stepOK, detail
 		}})
 	}
-	for _, u := range units(m.checked, m.detected, m.d.Home) {
+	for _, u := range m.installUnits() {
 		u := u
 		run, look := m.d.Run, m.d.LookPath
-		steps = append(steps, step{Label: u.label(), run: func() (stepState, string) { return runUnit(u, run, look) }})
+		steps = append(steps, step{Label: u.label(), Group: "pack", run: func() (stepState, string) { return runUnit(u, run, look) }})
 	}
 	if m.loops && len(m.detected) > 0 {
 		path := m.d.ConfigPath
 		shown := tilde(path, m.d.Home)
 		if m.writeConfig() {
 			cfg := ConfigFromRows(m.rows)
-			steps = append(steps, step{Label: "loops.json", run: func() (stepState, string) {
+			steps = append(steps, step{Label: "loops.json", Group: "loops", run: func() (stepState, string) {
 				if err := loops.WriteFile(path, cfg); err != nil {
 					return stepFailed, err.Error()
 				}
 				return stepOK, "wrote " + shown
 			}})
 		} else {
-			steps = append(steps, step{Label: "loops.json", State: stepSkipped, Detail: "kept existing " + shown})
+			steps = append(steps, step{Label: "loops.json", Group: "loops", State: stepSkipped, Detail: "kept existing " + shown})
 		}
 	}
 	return steps
@@ -1001,7 +750,11 @@ func (m Model) buildSteps() []step {
 
 func (m Model) startApply() (tea.Model, tea.Cmd) {
 	m.steps = m.buildSteps()
-	return m.runFrom(0)
+	next, cmd := m.runFrom(0)
+	if m.d.Animate && cmd != nil {
+		return next, tea.Batch(cmd, next.(Model).spin.Tick)
+	}
+	return next, cmd
 }
 
 // runFrom starts the first runnable step at or after i, or finishes.
@@ -1011,6 +764,7 @@ func (m Model) runFrom(i int) (tea.Model, tea.Cmd) {
 			continue
 		}
 		m.steps[i].State = stepRunning
+		m.steps[i].start = m.d.Now()
 		run := m.steps[i].run
 		idx := i
 		return m, func() tea.Msg {
@@ -1028,43 +782,19 @@ func (m Model) stepDone(msg stepDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.steps = append([]step(nil), m.steps...)
-	m.steps[msg.i].State, m.steps[msg.i].Detail = msg.state, msg.detail
+	s := &m.steps[msg.i]
+	s.State, s.Detail = msg.state, msg.detail
+	if !s.start.IsZero() {
+		s.Took = m.d.Now().Sub(s.start)
+	}
 	return m.runFrom(msg.i + 1)
-}
-
-func (m Model) applyView(w int) string {
-	head := amberStyle.Render("Applying…")
-	if m.finished {
-		head = okStyle.Render("Done") + mutedStyle.Render(" · "+m.appliedAt.Format("02/01/2006 15:04"))
-	}
-	b := []string{head, ""}
-	if len(m.steps) == 0 {
-		b = append(b, mutedStyle.Render("Nothing to do: no agent or pack was chosen."))
-	}
-	for _, s := range m.steps {
-		var mark, detail string
-		switch s.State {
-		case stepPending:
-			mark, detail = mutedStyle.Render("·"), "waiting"
-		case stepRunning:
-			mark, detail = amberStyle.Render("…"), "running"
-		case stepOK:
-			mark, detail = okStyle.Render("✓"), s.Detail
-		case stepFailed:
-			mark, detail = errorStyle.Render("✗"), s.Detail
-		case stepSkipped:
-			mark, detail = amberStyle.Render("-"), s.Detail
-		}
-		b = append(b, mark+" "+pad(s.Label, 30)+mutedStyle.Render(trunc(detail, w-33)))
-	}
-	if m.finished && len(m.steps) > 0 {
-		b = append(b, "", mutedStyle.Render(restartNote))
-	}
-	return strings.Join(b, "\n")
 }
 
 // Run shows the wizard full screen and returns the final model.
 func Run(d Deps, o Options) (Model, error) {
+	if d.NoColor {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
 	final, err := tea.NewProgram(New(d, o), tea.WithAltScreen()).Run()
 	if err != nil {
 		return Model{}, err

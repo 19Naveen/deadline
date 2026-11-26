@@ -191,7 +191,7 @@ func dispatchLocked(boardPath, dir string, cfg Config, b *task.Board, s *state, 
 			eventLog(dir, now, "loop skipped: %s %s already ran %d times (max_runs_per_task)", shortID(t.ID), q.Stage, s.Counts[key])
 			continue
 		}
-		if st.Skill != "" && !Hooks.HasSkill(st.Agent, st.Skill) {
+		if st.Skill != "" && !skillFound(boardPath, t, st) {
 			msg := fmt.Sprintf("loop skipped: skill %s not found for %s (run gotodo setup)", st.Skill, st.Agent)
 			eventLog(dir, now, "%s %s: %s", shortID(t.ID), q.Stage, msg)
 			noteKey := key + "|" + st.Skill
@@ -239,6 +239,26 @@ func dispatchLocked(boardPath, dir string, cfg Config, b *task.Board, s *state, 
 			PID: pid, Log: logPath, Started: now})
 	}
 	return launches, notes
+}
+
+// skillFound reports whether a stage's agent can load its skill: from the
+// user's skill directories (Hooks.HasSkill), or from the project skills of
+// the project root or the task's worktree, where the run starts.
+func skillFound(boardPath string, t task.Task, st Stage) bool {
+	if Hooks.HasSkill(st.Agent, st.Skill) {
+		return true
+	}
+	root := ProjectRoot(boardPath)
+	cwd, _ := workDir(boardPath, t)
+	for _, dir := range []string{root, cwd} {
+		if hasSkillName(ProjectSkills(st.Agent, dir), st.Skill) {
+			return true
+		}
+		if cwd == root {
+			break
+		}
+	}
+	return false
 }
 
 func containsQueued(list []Queued, q Queued) bool {
