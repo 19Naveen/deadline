@@ -216,7 +216,11 @@ func Run(boardPath, taskID, stage string, out io.Writer) error {
 	}()
 
 	cwd, wtNote := workDir(boardPath, t)
-	prompt := st.PromptFor(shortID(t.ID), t.Title, stage, absPath(boardPath)) + boardHint(cwd, boardPath)
+	cols := make([]string, 0, len(b.Statuses()))
+	for _, c := range b.Statuses() {
+		cols = append(cols, string(c))
+	}
+	prompt := st.PromptFor(shortID(t.ID), t.Title, stage, NextStage(cols, stage), absPath(boardPath)) + boardHint(cwd, boardPath)
 	cmd := BuildCommand(stage, st, prompt, cwd, boardPath)
 	fmt.Fprintf(logf, "agent:    %s · model %s · permissions %s · skill %s\n", st.Agent, orDash(st.Model), st.Perm(), orDash(st.Skill))
 	fmt.Fprintf(logf, "cwd:      %s\n", cwd)

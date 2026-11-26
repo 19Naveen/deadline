@@ -24,6 +24,11 @@ along as you work:
    inspect the family with `gotodo show <id-prefix>` or `list -parent`.
 5. `gotodo move <id-prefix> <active-column>` when starting, then through the
    reported pipeline's review/terminal columns as work is verified and done.
+   Move forward only when the stage is complete: every acceptance criterion
+   ticked, checks run and passing in this session, a Verification section on
+   the card, and every phase of the skill you were asked to use finished.
+   Otherwise leave the card with a Progress section. A move can start a paid
+   loop run, so never hand on half-done work.
 6. `gotodo edit <id-prefix> [flags]` for title, description, deadline, priority,
    labels, `-blocked-by`, parent, worktree, attachments or working notes.
 7. `gotodo delete <id-prefix>` only for cards logged by mistake — no undo.

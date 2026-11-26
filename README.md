@@ -674,7 +674,7 @@ gotodo loops dispatch        # start runs for new moves and drain the queue now
 }
 ```
 
-`prompt` is optional. The default prompt is: *Use the {skill} skill on gotodo task {id} ({title}), which just entered {stage}. Start by running `gotodo context {id}`…* You can use the placeholders `{skill}`, `{id}`, `{title}`, `{stage}` and `{board}`.
+`prompt` is optional. The default prompt asks for one complete pass, because every move can start another paid run: follow the skill's whole workflow, tick every acceptance criterion, run the checks in that run and record them in a **Verification** section, and only then `gotodo move` the card to the next column. An agent that cannot finish leaves the card where it is with a **Progress** section, or moves it to `blocked` with the exact question. Placeholders: `{skill}`, `{id}`, `{title}`, `{stage}`, `{next}` (the column after this one, skipping blocked) and `{board}`. A custom `prompt` replaces all of this, so keep those rules in it.
 
 **What a run does.**
 

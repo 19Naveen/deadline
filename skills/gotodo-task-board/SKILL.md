@@ -75,6 +75,29 @@ Bad: `gotodo add "tax rates frontend"`. Good: the command above. Subtasks get th
 - When scope changes, a decision is made or you hit a blocker, update `-desc` (keep the template; add a **Progress** or **Decisions** section).
 - Before moving to review, update `-desc` with what changed and how it was verified (tests run, results).
 
+## Finish before you move
+
+Every move is a hand-off: the next person or loop starts from where you left the card, and on boards with stage loops a move starts a new paid agent run. A card moved half-done wastes that run and hides unfinished work. So **move a card forward only when its stage is completely done**, not when you are tired of it or the context is filling up.
+
+Before `gotodo move <id> <next column>`:
+
+1. **Re-read the card** (`gotodo context <id>`) and check every acceptance criterion against what you actually built. Tick each one (`- [x]`) in the description with `gotodo edit <id> -desc ...`. One unticked criterion means you are not done.
+2. **Follow the skill you were asked to use to its end.** If a skill (or a loop prompt) named one, run its whole workflow, including its own planning, review and verification phases. Do not skip a phase to save time or tokens; a skipped phase is the step most likely to need a second run.
+3. **Prove it on the real thing.** Run the tests, build, linter or app this change affects, in this session, and read the output. "It should work" or "it compiles" is not verification.
+4. **Write it down.** Add a **Verification** section to the description: the commands you ran and what they showed. Link plans and notes with `-working-note`.
+5. **Leave nothing dangling.** No TODOs you added, no failing or skipped tests, no uncommitted work the next stage needs.
+
+What each forward move means:
+
+| Move | Only when |
+|---|---|
+| `todo → indev` (or `doing`) | You are starting now and have claimed the card. |
+| `indev → testing-review` | All acceptance criteria met and ticked, tests for the change written and passing, Verification section written. |
+| `testing-review → shipped` (or `done`) | You re-checked every criterion against the real artifact, ran the full test suite, reviewed the diff, and found nothing to fix. If anything fails, move it back to `indev` with a **Review findings** section instead. |
+| any → `blocked` | You need a human or an outside dependency. Add a **Blocked** section with the exact question or missing access. Not for work you could still do yourself. |
+
+If you cannot finish in this session, **leave the card where it is** and add a **Progress** section (done / remaining / next step), so whoever picks it up continues instead of restarting.
+
 ## Priority, dependencies and WIP
 
 - Work `P:high` cards first; `list` sorts each column by priority.
@@ -85,7 +108,7 @@ Bad: `gotodo add "tax rates frontend"`. Good: the command above. Subtasks get th
 
 - **You may be running inside a loop.** If `GOTODO_LOOP=1`, gotodo started you because your card entered a column. `GOTODO_AGENT` is already `loop:<stage>` and the card is already claimed for you. Do not run `gotodo claim` or `gotodo next -claim`.
 - **Find the board.** If gotodo started you in a worktree outside the project, the prompt says so. Run every command as `gotodo -file "$GOTODO_BOARD" ...`.
-- **Moving the card is the hand-off.** When your stage's work is done and verified, move the card to the next column, for example `gotodo move <id> testing-review`. That move can start the next stage's loop, so move only when the card is ready. If you are stuck, move the card to `blocked` and say why with `gotodo edit <id> -desc ...`.
+- **Moving the card is the hand-off, and it costs a run.** Your move can start the next stage's loop, a new paid agent run. Follow **Finish before you move** exactly: finish the named skill's whole workflow, tick every acceptance criterion, run the checks, write the Verification section, and only then move to the column your prompt names. If you cannot finish, leave the card in its column with a **Progress** section, or move it to `blocked` with a **Blocked** section if you need a human.
 - **Do not reconfigure loops.** `gotodo loops on/off/set/unset/stop` are refused for agents and loops. Report problems on the card instead.
 - **Logs.** `gotodo loops logs <id>` prints the latest run log for a card, and `gotodo loops` shows the live and queued runs.
 
@@ -107,6 +130,7 @@ Record user-provided reference documents with repeatable `-attachment PATH` flag
 ## Rules
 
 - One card per work item; `list` first, then `add` only when it is really new.
+- Never move a card forward with unmet acceptance criteria, failing checks, or a skipped phase of the skill you were asked to use. Finish one card before starting the next.
 - Never create a title-only card or subtask: every card gets a description in the template, plus priority, labels and any worktree, attachments and working notes that apply.
 - Headless commands only — bare `gotodo` opens the interactive TUI, never run that here.
 - CLI or MCP only: never read, search, parse, or edit `.deadline/board.json`, `tasks.json`, or any board storage file directly.

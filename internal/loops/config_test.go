@@ -46,10 +46,20 @@ func TestProjectOverridesGlobal(t *testing.T) {
 }
 
 func TestPromptTemplate(t *testing.T) {
-	p := Stage{Skill: "verify"}.PromptFor("3fa1c9e2", "Fix parser", "testing-review", "/b.json")
-	for _, want := range []string{"verify", "3fa1c9e2", "Fix parser", "testing-review", "gotodo context 3fa1c9e2"} {
+	p := Stage{Skill: "verify"}.PromptFor("3fa1c9e2", "Fix parser", "testing-review", "shipped", "/b.json")
+	for _, want := range []string{"verify", "3fa1c9e2", "Fix parser", "testing-review", "gotodo context 3fa1c9e2",
+		"gotodo move 3fa1c9e2 shipped", "acceptance criterion", "**Verification**", "do not move the card to shipped"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q: %s", want, p)
+		}
+	}
+}
+
+func TestNextStageSkipsBlocked(t *testing.T) {
+	dev := []string{"todo", "indev", "testing-review", "blocked", "shipped"}
+	for stage, want := range map[string]string{"todo": "indev", "indev": "testing-review", "testing-review": "shipped", "shipped": "", "nope": ""} {
+		if got := NextStage(dev, stage); got != want {
+			t.Errorf("NextStage(%s) = %q, want %q", stage, got, want)
 		}
 	}
 }

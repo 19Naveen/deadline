@@ -30,9 +30,23 @@ const (
 var Permissions = []string{PermReadOnly, PermEdits, PermFull}
 
 // DefaultPrompt is used when a stage sets none. {skill}, {id}, {title},
-// {stage} and {board} are substituted.
+// {stage}, {next} and {board} are substituted.
+//
+// Loop runs are expensive, so the prompt asks for one complete pass: follow
+// the skill's own workflow to the end, prove every acceptance criterion, and
+// only then hand the card on. A half-done move starts the next paid run on
+// unfinished work.
 const DefaultPrompt = "Use the {skill} skill on gotodo task {id} ({title}), which just entered {stage}. " +
-	"Start by running `gotodo context {id}` and read it fully. Keep the card current with gotodo as you work."
+	"Start by running `gotodo context {id}` and read it fully, including the working notes.\n\n" +
+	"Finish the whole job in this run. Follow every step of the {skill} skill's workflow to its end, " +
+	"including its own review and verification steps; do not skip steps to save time or tokens.\n\n" +
+	"Before you run `gotodo move {id} {next}`, all of these must be true: every acceptance criterion in the " +
+	"description is met and ticked ([x]); the tests and checks for this change pass, and you ran them in this " +
+	"run; and the description has a **Verification** section saying what you ran and what it showed. " +
+	"Record plans and notes you write with `gotodo edit {id} -working-note <path>`.\n\n" +
+	"If you cannot finish, do not move the card to {next}. Move it to blocked only when you need a human, " +
+	"and add a **Blocked** section to the description naming the exact question or missing access. " +
+	"Otherwise leave it in {stage} with a **Progress** section listing what is done and what remains."
 
 // Stage is what runs when a card enters one column.
 type Stage struct {
@@ -55,14 +69,34 @@ func (s Stage) Perm() string {
 	return s.Permissions
 }
 
-// PromptFor fills the stage's prompt template for one task.
-func (s Stage) PromptFor(id, title, stage, board string) string {
+// PromptFor fills the stage's prompt template for one task. next is the
+// column the card moves to when this stage's work is complete.
+func (s Stage) PromptFor(id, title, stage, next, board string) string {
 	p := s.Prompt
 	if strings.TrimSpace(p) == "" {
 		p = DefaultPrompt
 	}
+	if next == "" {
+		next = "the next column"
+	}
 	return strings.NewReplacer("{skill}", s.Skill, "{id}", id, "{title}", title,
-		"{stage}", stage, "{board}", board).Replace(p)
+		"{stage}", stage, "{next}", next, "{board}", board).Replace(p)
+}
+
+// NextStage is the column after stage in the pipeline, skipping blocked
+// (a detour, not a step forward). "" for the last column.
+func NextStage(columns []string, stage string) string {
+	for i, c := range columns {
+		if c != stage {
+			continue
+		}
+		for _, n := range columns[i+1:] {
+			if n != "blocked" {
+				return n
+			}
+		}
+	}
+	return ""
 }
 
 // Config is the whole loops setup.
