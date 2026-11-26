@@ -19,13 +19,61 @@ Track dev work on a per-project kanban board with the `gotodo` CLI. Project and 
 1. **Look first:** `gotodo list` (filters: `-status`, `-parent`, `-label`, `-priority`) and avoid duplicating a card that already exists.
 2. **Pick up queued work:** `gotodo next -claim -start` chooses the highest-priority unblocked todo task nobody holds, claims it for you (2h; `-ttl 4h` for longer) and moves it to the active column. "no available tasks" means nothing is free; never take another agent's claimed card. `gotodo claim <id>` claims a specific card and extends your own claim on long work.
 3. **Resume:** `gotodo context <id>` prints everything needed to continue a card — fields, parent, subtasks, blockers, working-note contents and recent history. Read it before continuing work someone else started.
-4. **Log new work before starting:** `gotodo add "title" [-desc "detail"] [-deadline DD/MM/YYYY] [-priority high|medium|low] [-label NAME]... [-blocked-by ID]... [-parent ID] [-worktree PATH] [-status todo]` — it prints the id; keep its short prefix.
+4. **Log new work before starting, fully filled in:** a card is the hand-off to the human and to the next agent, so a title alone is never enough. Follow **Writing a complete card** below for every task and subtask. `gotodo add` prints the id; keep its short prefix.
 5. **Group related work:** use `-parent <parent-id>` for subtasks; inspect with `gotodo show <parent-id>` or `gotodo list -parent <parent-id>`. Hierarchy is one level deep, and a parent cannot finish before all subtasks.
 6. **Move it along:** `gotodo move <id-prefix> <status>` through the columns reported by `gotodo board`. Moving a card to the terminal column releases its claim and unblocks its dependants automatically.
 7. **Update details:** `gotodo edit <id-prefix> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-priority ...] [-label NAME]... [-blocked-by ID]... [-parent ID] [-worktree PATH]`. Repeatable flags replace the whole list on `edit`; an explicitly blank value clears a field. Use `move` for status.
 8. **Stuck:** move to `blocked`, record the reason with `edit -desc`, and `gotodo release <id>`; move back to the active column when unblocked.
 9. **Stopping or handing off:** `gotodo release <id>` so another agent can pick the card up.
 10. **Wrong card:** `gotodo delete <id-prefix>` removes it — no confirm or undo. Deleting a parent detaches its subtasks.
+
+## Writing a complete card
+
+Before every `gotodo add` (task or subtask), gather and pass all of these. Skip a field only when it truly does not apply, never because it is effort.
+
+| Field | Flag | What to put |
+|---|---|---|
+| Title | (argument) | Short, specific, imperative: what will be true when done. Include the ticket or issue reference if there is one. |
+| Description | `-desc` | Always. Use the template below: goal, context, scope, acceptance criteria. |
+| Priority | `-priority` | `high` (blocking or urgent), `medium` (normal), `low` (nice to have). |
+| Labels | `-label` (repeatable) | Area and type, e.g. `backend`, `frontend`, `bug`, `docs`. |
+| Parent | `-parent` | For subtasks: the top-level task they belong to. |
+| Blockers | `-blocked-by` (repeatable) | Tasks that must ship first. |
+| Deadline | `-deadline DD/MM/YYYY` | When the user gave a date or one is implied. |
+| Worktree | `-worktree` | The worktree path or branch when not working in the main checkout. Check with `git rev-parse --show-toplevel` and `git branch --show-current`. |
+| Attachments | `-attachment` (repeatable) | Every user-provided reference for this task: specs, .docx/.pdf/.xlsx, screenshots, tickets, files the user pointed you at. |
+| Working notes | `-working-note` (repeatable) | Every plan or notes file you or another workflow wrote for this task (`docs/task.md`, `phase2.md`, `frontend.md`, handover docs). |
+
+Pass a multi-line description with a quoted heredoc:
+
+```sh
+gotodo add "Show Xero tax rates in the category dropdown" -priority high -label frontend -label xero \
+  -parent 5fa76639 -worktree ../app-tax-rates \
+  -attachment docs/specs/tax-rates-uat.docx -working-note docs/FRONTEND_HANDOVER_TAX_RATES.md \
+  -desc "$(cat <<'CARD'
+**Goal:** users pick a Xero tax rate per category instead of typing a code.
+
+**Context:** UAT 25/11 items #2 and #7; the backend endpoint is GET /xero/tax-rates (task 7e3de89e).
+
+**Scope:**
+- dropdown fed by /xero/tax-rates, cached per session
+- unknown codes rejected with an inline error
+
+**Acceptance criteria:**
+- [ ] dropdown lists active Xero rates with name and percentage
+- [ ] saving sends the picked TaxType
+- [ ] unit tests for the mapper; manual check against the demo org
+CARD
+)"
+```
+
+Bad: `gotodo add "tax rates frontend"`. Good: the command above. Subtasks get their own description with their own acceptance criteria; never leave them title-only because the parent has a description.
+
+**Keep the card current as you work** (`gotodo edit`; run `gotodo show <id>` first, because list flags replace the whole list):
+- When you write or update a plan or notes file, add it with `-working-note`.
+- When the user shares a file, add it with `-attachment`.
+- When scope changes, a decision is made or you hit a blocker, update `-desc` (keep the template; add a **Progress** or **Decisions** section).
+- Before moving to review, update `-desc` with what changed and how it was verified (tests run, results).
 
 ## Priority, dependencies and WIP
 
@@ -51,6 +99,7 @@ Record user-provided reference documents with repeatable `-attachment PATH` flag
 ## Rules
 
 - One card per work item; `list` first, then `add` only when it is really new.
+- Never create a title-only card or subtask: every card gets a description in the template, plus priority, labels and any worktree, attachments and working notes that apply.
 - Headless commands only — bare `gotodo` opens the interactive TUI, never run that here.
 - CLI or MCP only: never read, search, parse, or edit `.deadline/board.json`, `tasks.json`, or any board storage file directly.
 - If `gotodo` is not on PATH, try exactly `~/.local/bin/gotodo`. Do not search the filesystem for it. If that is also missing, tell the human to install it and continue without tracking.

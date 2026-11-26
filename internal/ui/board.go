@@ -111,10 +111,10 @@ func NewBoardModel(b *task.Board) BoardModel {
 	}
 	m.title = line("task title", 200)
 	m.deadline = line("DD/MM/YYYY", 10)
-	m.worktree = line("path or branch (optional)", 500)
-	m.parent = line("type a task title or ID (optional)", 200)
-	m.attachments = line("reference paths", 4000)
-	m.workingNotes = line("agent document paths", 4000)
+	m.worktree = line("path or branch", 500)
+	m.parent = line("none: type a title or ID", 200)
+	m.attachments = line("none", 4000)
+	m.workingNotes = line("none", 4000)
 	m.search = line("title, #label, @agent or ID", 200)
 	m.search.Prompt = "/ "
 
@@ -141,9 +141,11 @@ const (
 	// popupMaxWidth caps the centred panels at a comfortable line length.
 	popupMaxWidth = 72
 	// The description editor is bounded so the other fields stay visible.
-	descDefaultRows = 15
-	descMaxRows     = 15
-	descMinRows     = 3
+	// It opens at descEmptyRows, grows with its content up to descMaxRows,
+	// and gives rows back (down to one) only when the terminal is short.
+	descEmptyRows = 4
+	descMaxRows   = 15
+	descMinRows   = 3
 )
 
 // popupWidth is the content width of the centred panels, with a side margin.
@@ -160,73 +162,6 @@ func (m BoardModel) popupWidth() int {
 		w = minColumnWidth
 	}
 	return w
-}
-
-// sizeForm fits the fields inside the popup so long values scroll in place.
-func (m *BoardModel) sizeForm() {
-	inner := m.popupWidth() - 2 // panel's one-column padding on each side
-	if inner < 10 {
-		inner = 10
-	}
-	// textinput draws "› " plus Width+1 cells (a cursor cell), so each input
-	// gets its column minus 3 or it wraps onto a ghost blank row.
-	dl, wt := formDateWidths(inner)
-	m.title.Width = inner - 3
-	m.deadline.Width = dl - 3
-	m.worktree.Width = wt - 3
-	m.parent.Width = inner - 3
-	m.attachments.Width = dl - 3
-	m.workingNotes.Width = wt - 3
-	m.desc.SetWidth(inner)
-	rows, _ := m.formRows()
-	m.desc.SetHeight(rows)
-}
-
-// formRows returns the description box height and whether the calendar fits.
-// On a short terminal the calendar is dropped first (the date can still be
-// typed). Re-run via sizeForm whenever the height or picker changes.
-func (m BoardModel) formRows() (rows int, calendar bool) {
-	rows, calendar = descDefaultRows, m.picker.open
-	if m.height <= 0 {
-		return rows, calendar
-	}
-	// Content budget: one AppModel tab row and the panel's two border rows.
-	budget := m.height - 3
-	fixed := 11 + m.formGaps()
-	if m.showDocumentFields() {
-		fixed += 2
-	}
-	if m.compactParentForm() {
-		fixed = 10 + m.formGaps()
-	}
-	if m.compactDocumentForm() {
-		fixed--
-	}
-	if m.field == fieldParent {
-		fixed += m.parentDropdownHeight()
-	}
-	fixed += len(m.formRelationships(m.popupWidth() - 2))
-	if m.err != "" {
-		fixed++
-	}
-	cal := 0
-	if calendar {
-		cal = lipgloss.Height(m.picker.View(m.now())) + 2 // blank row + hint
-	}
-	if m.compactParentForm() || m.compactDocumentForm() {
-		return 1, false
-	}
-	if budget-fixed-cal < descMinRows {
-		calendar, cal = false, 0
-	}
-	rows = budget - fixed - cal
-	if rows > descMaxRows {
-		rows = descMaxRows
-	}
-	if rows < 1 {
-		rows = 1
-	}
-	return rows, calendar
 }
 
 // overlay centres a panel on the page. lipgloss has no compositing at this
@@ -1022,67 +957,6 @@ func (m *BoardModel) focusField(delta int) {
 	m.applyFieldFocus()
 }
 
-// renderForm draws the add/edit form: title, description, deadline/worktree,
-// parent, then the relationships summary.
-func (m BoardModel) renderForm() string {
-	heading := "New task"
-	if m.editID != "" {
-		heading = "Edit task"
-	}
-	width := m.popupWidth()
-	contentWidth := width - 2
-
-	spacer := []string{}
-	if m.formGaps() > 0 {
-		spacer = []string{""}
-	}
-
-	rows := []string{
-		TitleStyle.Render(heading),
-		MutedStyle.Render(strings.Repeat("─", contentWidth)),
-		formLabel(fieldTitle, m.field, "Title", "required", contentWidth),
-		m.title.View(),
-	}
-	rows = append(rows, spacer...)
-	if !m.compactParentForm() && !m.compactDocumentForm() {
-		rows = append(rows,
-			formLabel(fieldDesc, m.field, "Description", "ctrl+j new line", contentWidth),
-			m.desc.View())
-		rows = append(rows, spacer...)
-	}
-	dlW, wtW := formDateWidths(contentWidth)
-	rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(dlW).Render(formLabel(fieldDeadline, m.field, "Deadline", "dd/mm/yyyy", dlW)+"\n"+m.deadline.View()),
-		"  ",
-		lipgloss.NewStyle().Width(wtW).Render(formLabel(fieldWorktree, m.field, "Worktree", "path or branch", wtW)+"\n"+m.worktree.View())))
-	rows = append(rows, spacer...)
-	rows = append(rows,
-		formLabel(fieldParent, m.field, "Parent", "type to filter, ↑↓ to choose", contentWidth),
-		m.parent.View())
-	if m.field == fieldParent {
-		if dropdown := m.renderParentDropdown(contentWidth); dropdown != "" {
-			rows = append(rows, dropdown)
-		}
-	}
-	if m.showDocumentFields() {
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(dlW).Render(formLabel(fieldAttachments, m.field, "Attachments", "", dlW)+"\n"+m.attachments.View()),
-			"  ",
-			lipgloss.NewStyle().Width(wtW).Render(formLabel(fieldWorkingNotes, m.field, "Working notes", "CSV paths", wtW)+"\n"+m.workingNotes.View())))
-	}
-	rows = append(rows, m.formRelationships(contentWidth)...)
-	if m.err != "" {
-		rows = append(rows, errorLine(m.err))
-	}
-	if _, calendar := m.formRows(); calendar {
-		rows = append(rows, "", m.picker.View(m.now()),
-			keyHint("hjkl", "Move")+"  "+keyHint("t", "Today")+MutedStyle.Render("  or type a date"))
-	}
-	rows = append(rows, popupFoot(contentWidth,
-		keyHint("tab", "Field"), keyHint("ctrl+j", "New line"), keyHint("enter", "Save"), keyHint("esc", "Cancel"))...)
-	return ColumnStyle.Copy().Width(width).Render(strings.Join(rows, "\n"))
-}
-
 // formRelationships is the read-only links block under the Parent selector:
 // a new subtask names its parent, an edited parent lists its subtasks.
 func (m BoardModel) formRelationships(width int) []string {
@@ -1144,30 +1018,6 @@ func (m BoardModel) parentOptions() []task.Task {
 
 const parentDropdownRows = 4
 
-func (m BoardModel) compactParentForm() bool {
-	return m.field == fieldParent && m.height > 0 && m.height < 19
-}
-
-func (m BoardModel) showDocumentFields() bool {
-	return !m.compactParentForm() && (m.height <= 0 || m.height >= 24 ||
-		m.field == fieldAttachments || m.field == fieldWorkingNotes)
-}
-
-func (m BoardModel) compactDocumentForm() bool {
-	return m.height > 0 && m.height < 17 &&
-		(m.field == fieldAttachments || m.field == fieldWorkingNotes)
-}
-
-// formGaps is the number of blank rows between form sections; short terminals
-// drop them so the form still fits.
-func (m BoardModel) formGaps() int {
-	if m.height > 0 && (m.height < 18 ||
-		(m.height < 21 && (m.field == fieldAttachments || m.field == fieldWorkingNotes))) {
-		return 0
-	}
-	return 3
-}
-
 func (m BoardModel) filteredParentOptions() []task.Task {
 	query := strings.ToLower(strings.TrimSpace(m.parent.Value()))
 	options := m.parentOptions()
@@ -1181,38 +1031,6 @@ func (m BoardModel) filteredParentOptions() []task.Task {
 		}
 	}
 	return filtered
-}
-
-func (m BoardModel) parentDropdownHeight() int {
-	if m.field != fieldParent {
-		return 0
-	}
-	rows := len(m.filteredParentOptions())
-	if rows < 1 {
-		rows = 1
-	}
-	if rows > parentDropdownRows {
-		rows = parentDropdownRows
-	}
-	desired := rows + 3 // heading + top/bottom border
-	if m.height <= 0 {
-		return desired
-	}
-	base := 12 + m.formGaps() // fixed form furniture plus one description row
-	if m.showDocumentFields() {
-		base += 2
-	}
-	if m.compactParentForm() {
-		base = 10 + m.formGaps() // description section hidden while choosing
-	}
-	available := m.height - 3 - base
-	if available < 0 {
-		return 0
-	}
-	if desired > available {
-		return available
-	}
-	return desired
 }
 
 func (m *BoardModel) moveParentHighlight(delta int) {
@@ -1244,7 +1062,11 @@ func (m *BoardModel) chooseHighlightedParent() bool {
 }
 
 func (m BoardModel) renderParentDropdown(width int) string {
-	height := m.parentDropdownHeight()
+	return m.renderParentDropdownSized(width, m.parentDropdownHeight())
+}
+
+// renderParentDropdownSized draws the dropdown in at most height rows.
+func (m BoardModel) renderParentDropdownSized(width, height int) string {
 	if height == 0 {
 		return ""
 	}
@@ -1727,6 +1549,7 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.title, cmd = m.title.Update(k)
 	case fieldDesc:
 		m.desc, cmd = m.desc.Update(k)
+		m.sizeForm() // the editor grows with its content
 	case fieldWorktree:
 		m.worktree, cmd = m.worktree.Update(k)
 	case fieldAttachments:

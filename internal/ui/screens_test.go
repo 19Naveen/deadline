@@ -114,12 +114,13 @@ func TestFormInputsDoNotWrap(t *testing.T) {
 	m.SetSize(120, 40)
 	m = press(m, "a")
 	inner := m.popupWidth() - 2
-	dl, wt := formDateWidths(inner)
+	dl, wt := formPairWidths(inner)
 	for _, c := range []struct {
 		name  string
 		view  string
 		width int
-	}{{"title", m.title.View(), inner}, {"parent", m.parent.View(), inner}, {"deadline", m.deadline.View(), dl}, {"worktree", m.worktree.View(), wt}} {
+	}{{"title", m.title.View(), inner}, {"parent", m.parent.View(), inner}, {"deadline", m.deadline.View(), dl}, {"worktree", m.worktree.View(), wt},
+		{"attachments", m.attachments.View(), dl}, {"working notes", m.workingNotes.View(), wt}} {
 		if got := lipgloss.Width(c.view); got > c.width {
 			t.Errorf("%s input is %d wide, column is %d", c.name, got, c.width)
 		}

@@ -1573,17 +1573,19 @@ func TestFormDescriptionEditorUsesAvailableHeight(t *testing.T) {
 	m.SetSize(120, 40)
 	m = press(m, "a", "tab") // focus the description
 
-	if got := m.desc.Height(); got != descMaxRows {
-		t.Errorf("description height = %d, want %d on a normal terminal", got, descMaxRows)
+	if got := m.desc.Height(); got != descEmptyRows {
+		t.Errorf("empty description height = %d, want %d", got, descEmptyRows)
 	}
-	if got := m.desc.Height(); got != 15 {
-		t.Errorf("default description viewport = %d rows, want 15", got)
+	m.desc.SetValue(strings.Repeat("line\n", 30))
+	m = press(m, "x") // typing resizes the editor
+	if got := m.desc.Height(); got != descMaxRows {
+		t.Errorf("long description height = %d, want it to grow to %d", got, descMaxRows)
 	}
 	if m.desc.CharLimit < 5000 {
 		t.Errorf("description CharLimit = %d, want room for substantial task notes", m.desc.CharLimit)
 	}
 	out := stripANSI(m.View())
-	for _, want := range []string{"Description", "ctrl+j new line", "ctrl+j New line", "enter Save"} {
+	for _, want := range []string{"Description", "Markdown", "ctrl+j New line", "enter Save"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("professional form is missing %q:\n%s", want, out)
 		}
@@ -1628,16 +1630,16 @@ func TestFormSectionsAreEvenlySpacedWithParentAtBottom(t *testing.T) {
 	for i, line := range lines {
 		if isBlankPanelRow(line) && i+1 < len(lines) {
 			next := lines[i+1]
-			if strings.Contains(next, "Description") || strings.Contains(next, "Deadline") || strings.Contains(next, "Parent") {
+			if strings.Contains(next, "Description") || strings.Contains(next, "Deadline") || strings.Contains(next, "Parent") || strings.Contains(next, "Attachments") {
 				blankGaps++
 			}
 		}
 	}
-	if m.formGaps() != 3 {
-		t.Errorf("formGaps() = %d on a tall terminal, want 3 for even spacing", m.formGaps())
+	if !m.computeFormLayout().gaps {
+		t.Errorf("gaps dropped on a tall terminal")
 	}
-	if blankGaps != 3 {
-		t.Errorf("want a blank row before DESCRIPTION, DEADLINE and PARENT, got %d:\n%s", blankGaps, out)
+	if blankGaps != 4 {
+		t.Errorf("want a blank row before DESCRIPTION, DEADLINE, PARENT and ATTACHMENTS, got %d:\n%s", blankGaps, out)
 	}
 }
 
@@ -1654,7 +1656,7 @@ func TestEditParentListsSubtasksAtBottomOfForm(t *testing.T) {
 	m.SetSize(120, 40)
 	m = press(m, "e")
 	out := stripANSI(m.renderForm())
-	parentIdx := strings.Index(out, "type to filter")
+	parentIdx := strings.Index(out, "Parent")
 	subIdx := strings.Index(out, "Subtasks")
 	if parentIdx < 0 || subIdx < 0 {
 		t.Fatalf("edit form missing parent selector or subtask summary:\n%s", out)

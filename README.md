@@ -265,7 +265,11 @@ Dropping or approving a card re-checks dependencies at once, the same as
 
 Adding and editing open the same form, centred in the same place. `tab` and
 `shift+tab` move between Title, Description, Deadline, Worktree, Parent,
-Attachments and Working notes.
+Attachments and Working notes. Sections sit one blank row apart (on a short
+terminal every gap goes at once, never just one), only the focused field shows
+a hint, and fields you are not in show the start of their value, so a long
+title or parent stays recognisable. The footer lists the keys for the field
+you are on.
 Worktree is optional free text — the git worktree path or branch the work
 lives in — and a new subtask starts with its parent's.
 Attachments are paths to user-provided reference files; Working notes are
@@ -277,8 +281,8 @@ parent. The dropdown shows titles and short IDs together, so nothing must be
 memorized. After choosing, `enter` saves; `esc` throws the form away.
 
 The Description is multi-line: `ctrl+j` starts a new line, and `enter` still
-saves. The editor opens 15 rows tall, shrinking only when the terminal
-cannot fit it.
+saves. The editor opens four rows tall and grows with what you type, up to
+15 rows, giving rows back only when the terminal cannot fit them.
 
 Parent cards show a progress bar (`▰▱ 1/2 subtasks`). Subtasks keep their own
 column and deadline, show `↳ parent` on the card, and appear in the parent's
@@ -402,6 +406,7 @@ its cap.
 Coding agents can't drive the interactive board, so `gotodo` has headless commands with plain-text output. They run against the project board when invoked in the project directory:
 
 ```bash
+gotodo help                                    # every command; gotodo help add for one
 gotodo init                                    # once per project (skip if .deadline/ exists)
 gotodo board                                   # board type + accepted columns
 gotodo add "Rewrite the parser" -desc "Split the lexer" -deadline 04/08/2026 -priority high
@@ -434,7 +439,7 @@ Repeat `-attachment` or `-working-note` to specify multiple paths. On `edit`,
 each supplied flag replaces that entire list; supply all paths to keep, or an
 empty value to clear it. `gotodo show` displays the recorded paths.
 
-The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). A bare `gotodo -h`, or `init`, `add` or `list` with `-h`, prints help without changing anything.
+`gotodo help` lists every command by group; `gotodo help <command>` shows its flags and examples (`gotodo -h` and `--help` work too). The global `-file` flag must precede the subcommand (`gotodo -file ./work.json list`). Help never changes anything.
 
 The installer drops a `gotodo-task-board` skill (`skills/gotodo-task-board/SKILL.md` in this repo) into the Claude, Codex, OpenCode and shared agent skills directories. Its task-management and kanban keywords make it easy for agents to discover for any coding workflow. An open board picks up agent writes within a couple of seconds — no restart needed.
 

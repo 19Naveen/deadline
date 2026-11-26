@@ -122,12 +122,15 @@ func DefaultTools() []Tool {
 		{
 			Name:  "add_task",
 			Title: "Add task",
-			Description: "Create a task card. Log one before starting any code change. It starts in the " +
+			Description: "Create a task card. Log one before starting any code change. Never create a " +
+				"title-only card or subtask: always set description (Markdown with goal, context, scope and " +
+				"acceptance criteria), priority and labels, plus worktree, attachments (user-provided reference " +
+				"files) and working_notes (plans or notes you wrote) whenever they apply. It starts in the " +
 				"first column unless status is given. Use parent to make it a subtask of a top-level task " +
 				"(hierarchy is one level deep). Returns the new task's short ID.",
 			InputSchema: objectSchema(map[string]any{
 				"title":         stringProp("Short imperative title, e.g. \"Fix parser crash on empty input\"."),
-				"description":   stringProp("Optional detail: scope, acceptance criteria, links."),
+				"description":   stringProp("Markdown: **Goal**, **Context**, **Scope** and **Acceptance criteria** (checklist). Expected on every card."),
 				"deadline":      dateProp("Optional due date as DD/MM/YYYY."),
 				"status":        stringProp("Optional starting column (a name from the board tool); defaults to the first column."),
 				"parent":        stringProp("Optional parent task ID or unique prefix; the new task becomes its subtask."),

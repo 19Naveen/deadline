@@ -93,6 +93,7 @@ func main() {
 func run(argv []string) error {
 	fs := flag.NewFlagSet("gotodo", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the tasks JSON file (default: project board, else personal board)")
+	fs.Usage = func() { printHelp(os.Stdout) }
 	// Parsing stops at the subcommand; each subcommand parses its own flags.
 	if err := fs.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -102,7 +103,10 @@ func run(argv []string) error {
 	}
 	args := fs.Args()
 
-	// init runs before board resolution so it works where no board exists.
+	// help and init run before board resolution so they work anywhere.
+	if len(args) > 0 && (args[0] == "help" || args[0] == "--help") {
+		return runHelp(args[1:])
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInit(args[1:])
 	}
@@ -160,7 +164,7 @@ func run(argv []string) error {
 		fmt.Println(version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (want init, board, add, list, show, move, edit, delete, wip, next, claim, release, context, approval, mcp, standup, pr, serve, notify or version)", args[0])
+		return fmt.Errorf("unknown command %q (run 'gotodo help'; commands: %s)", args[0], commandNames())
 	}
 }
 

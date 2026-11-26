@@ -16,6 +16,10 @@ along as you work:
    or take queued work with `gotodo next -claim -start`; resume a card with
    `gotodo context <id>` and `gotodo release <id>` when you stop. Never take a
    card another agent has claimed.
+   Never log a title-only card or subtask: always pass `-desc` (goal, context,
+   scope, acceptance criteria), `-priority`, `-label`, and `-worktree`,
+   `-attachment` (user-provided files) and `-working-note` (plans/notes you
+   write) whenever they apply. Keep them updated with `gotodo edit` as you work.
 4. Use `-parent <id-prefix>` when the work is a subtask of an existing card;
    inspect the family with `gotodo show <id-prefix>` or `list -parent`.
 5. `gotodo move <id-prefix> <active-column>` when starting, then through the
