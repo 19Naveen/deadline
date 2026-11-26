@@ -51,9 +51,11 @@ const projectDirName = ".deadline"
 const projectBoardFile = "board.json"
 
 // addUsage is printed for `add -h` and malformed add invocations.
-const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]...`
+const addUsage = `usage: gotodo add "title" [-desc ...] [-deadline DD/MM/YYYY] [-status ...] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]... [-priority none|low|medium|high] [-label NAME]... [-blocked-by ID]...`
 
-const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]...`
+const editUsage = `usage: gotodo edit <id> [-title ...] [-desc ...] [-deadline DD/MM/YYYY] [-parent ID] [-worktree PATH] [-attachment PATH]... [-working-note PATH]... [-priority none|low|medium|high] [-label NAME]... [-blocked-by ID]...`
+
+const listUsage = `usage: gotodo list [-status ...] [-parent ID] [-label NAME] [-priority none|low|medium|high]`
 
 type pathFlags []string
 
@@ -121,6 +123,8 @@ func run(argv []string) error {
 		return runEdit(path, args[1:])
 	case "delete":
 		return runDelete(path, args[1:])
+	case "wip":
+		return runWIP(path, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
@@ -304,6 +308,10 @@ func runAdd(path string, args []string) error {
 	var attachments, notes pathFlags
 	fs.Var(&attachments, "attachment", "reference path (repeatable)")
 	fs.Var(&notes, "working-note", "agent working document path (repeatable)")
+	priorityStr := fs.String("priority", "", "none, low, medium or high")
+	var labels, blockedBy pathFlags
+	fs.Var(&labels, "label", "label (repeatable)")
+	fs.Var(&blockedBy, "blocked-by", "ID prefix of a task that must finish first (repeatable)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -312,6 +320,10 @@ func runAdd(path string, args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (%s)", fs.Arg(0), addUsage)
+	}
+	priority, err := task.ParsePriority(*priorityStr)
+	if err != nil {
+		return err
 	}
 	board, err := loadBoard(path)
 	if err != nil {
@@ -343,6 +355,10 @@ func runAdd(path string, args []string) error {
 		}
 		parentID = parent.ID
 	}
+	blockers, err := resolveBlockers(board, blockedBy)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
 	var t *task.Task
 	if parentID == "" {
@@ -360,15 +376,26 @@ func runAdd(path string, args []string) error {
 	if err := board.SetDocuments(id, attachments, notes, now); err != nil {
 		return err
 	}
+	if err := board.SetPriority(id, priority, now); err != nil {
+		return err
+	}
+	if err := board.SetLabels(id, labels, now); err != nil {
+		return err
+	}
+	if err := board.SetBlockedBy(id, blockers, now); err != nil {
+		return err
+	}
 	if status != board.Statuses()[0] {
 		if err := board.Move(id, status, now); err != nil {
 			return err
 		}
 	}
+	moved := board.SyncBlocked(now)
 	if err := board.Save(); err != nil {
 		return err
 	}
 	fmt.Printf("added %s [%s] %s\n", shortID(id), status, addedTitle)
+	printSynced(board, moved)
 	return nil
 }
 
@@ -385,12 +412,15 @@ func parseHeadlessDeadline(value string) (*time.Time, error) {
 	return &d, nil
 }
 
-// runList prints one line per active task. Read-only: the archive sweep is
-// applied in memory and never saved.
+// runList prints one line per active task, highest priority first within
+// each column, after a warning line for each column over its WIP limit.
+// Read-only: the archive sweep is applied in memory and never saved.
 func runList(path string, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	statusStr := fs.String("status", "", "only show one column")
 	parentStr := fs.String("parent", "", "only show children of one task")
+	labelStr := fs.String("label", "", "only show tasks with this label")
+	priorityStr := fs.String("priority", "", "only show tasks with this priority (none, low, medium, high)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -398,8 +428,14 @@ func runList(path string, args []string) error {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		return fmt.Errorf("unexpected argument %q (%s)", fs.Arg(0), listUsage)
 	}
+	filterPriority := *priorityStr != ""
+	priority, err := task.ParsePriority(*priorityStr)
+	if err != nil {
+		return err
+	}
+	label := task.NormalizeLabel(*labelStr)
 	board, err := loadBoard(path)
 	if err != nil {
 		return err
@@ -422,13 +458,22 @@ func runList(path string, args []string) error {
 		}
 		parentID = parent.ID
 	}
+	printWIPWarnings(board, filter)
 	printed := 0
 	for _, s := range board.Statuses() {
 		if filter != "" && s != filter {
 			continue
 		}
-		for _, t := range board.ByStatus(s) {
+		column := board.ByStatus(s)
+		task.SortByPriority(column)
+		for _, t := range column {
 			if parentID != "" && t.ParentID != parentID {
+				continue
+			}
+			if label != "" && !t.HasLabel(label) {
+				continue
+			}
+			if filterPriority && t.Priority != priority {
 				continue
 			}
 			line := fmt.Sprintf("%s [%s] %s", shortID(t.ID), s, t.Title)
@@ -445,6 +490,7 @@ func runList(path string, args []string) error {
 			if t.Worktree != "" {
 				line += " · worktree " + t.Worktree
 			}
+			line += metaSuffix(board, t)
 			fmt.Println(line)
 			printed++
 		}
@@ -491,6 +537,7 @@ func runShow(path string, args []string) error {
 	for _, path := range t.WorkingNotes {
 		fmt.Printf("working note: %s\n", path)
 	}
+	printShowMeta(board, t)
 	if t.Description != "" {
 		fmt.Printf("description:\n%s\n", t.Description)
 	}
@@ -548,8 +595,10 @@ func runMove(path string, args []string) error {
 }
 
 // runEdit changes the supplied task fields headless; omitted flags keep their
-// values, and an empty -desc, -deadline or -worktree clears it. Status
-// changes go through move.
+// values, and an empty -desc, -deadline or -worktree clears it. Repeatable
+// -label and -blocked-by replace the whole list (a blank value clears it).
+// Status changes go through move, though dependency rules may auto-block or
+// unblock cards on save.
 func runEdit(path string, args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println(editUsage)
@@ -567,6 +616,10 @@ func runEdit(path string, args []string) error {
 	var attachments, notes pathFlags
 	fs.Var(&attachments, "attachment", "replace reference paths (repeatable; blank clears)")
 	fs.Var(&notes, "working-note", "replace working document paths (repeatable; blank clears)")
+	priorityFlag := fs.String("priority", "", "replacement priority: none, low, medium or high")
+	var labels, blockedBy pathFlags
+	fs.Var(&labels, "label", "replace labels (repeatable; blank clears)")
+	fs.Var(&blockedBy, "blocked-by", "replace blocking task ID prefixes (repeatable; blank clears)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -580,6 +633,10 @@ func runEdit(path string, args []string) error {
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if len(set) == 0 {
 		return errors.New(editUsage)
+	}
+	priority, err := task.ParsePriority(*priorityFlag)
+	if err != nil {
+		return err
 	}
 
 	board, err := loadBoard(path)
@@ -615,7 +672,19 @@ func runEdit(path string, args []string) error {
 			parentID = parent.ID
 		}
 	}
+	var blockers []string
+	if set["blocked-by"] {
+		if blockers, err = resolveBlockers(board, blockedBy); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
+	if set["blocked-by"] {
+		// First, so a rejected dependency (cycle, self) changes nothing.
+		if err := board.SetBlockedBy(t.ID, blockers, now); err != nil {
+			return err
+		}
+	}
 	if err := board.EditWithParent(t.ID, parentID, title, desc, deadline, now); err != nil {
 		return err
 	}
@@ -635,10 +704,22 @@ func runEdit(path string, args []string) error {
 			return err
 		}
 	}
+	if set["priority"] {
+		if err := board.SetPriority(t.ID, priority, now); err != nil {
+			return err
+		}
+	}
+	if set["label"] {
+		if err := board.SetLabels(t.ID, labels, now); err != nil {
+			return err
+		}
+	}
+	moved := board.SyncBlocked(now)
 	if err := board.Save(); err != nil {
 		return err
 	}
 	fmt.Printf("edited %s [%s] %s\n", shortID(t.ID), t.Status, strings.TrimSpace(title))
+	printSynced(board, moved)
 	return nil
 }
 
