@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Agents are the CLIs a stage can run.
@@ -72,6 +73,8 @@ type Config struct {
 	// MaxRunsPerTask caps runs per task per stage, so a card bouncing
 	// between columns cannot loop forever.
 	MaxRunsPerTask int `json:"max_runs_per_task,omitempty"`
+	// TimeoutMinutes stops a run that outlives it; zero means the default.
+	TimeoutMinutes int `json:"timeout_minutes,omitempty"`
 	// Stages maps a column name (e.g. "indev") to what runs on entry.
 	Stages map[string]Stage `json:"stages,omitempty"`
 }
@@ -80,7 +83,16 @@ type Config struct {
 const (
 	DefaultMaxParallel    = 2
 	DefaultMaxRunsPerTask = 3
+	DefaultTimeout        = 2 * time.Hour
 )
+
+// Timeout is how long one run may take before it is stopped.
+func (c Config) Timeout() time.Duration {
+	if c.TimeoutMinutes <= 0 {
+		return DefaultTimeout
+	}
+	return time.Duration(c.TimeoutMinutes) * time.Minute
+}
 
 // Limits returns the effective limits.
 func (c Config) Limits() (parallel, perTask int) {
@@ -106,6 +118,9 @@ func (c Config) StageNames() []string {
 
 // Validate checks agents, permissions and that each stage names a skill.
 func (c Config) Validate() error {
+	if c.MaxParallel < 0 || c.MaxRunsPerTask < 0 || c.TimeoutMinutes < 0 {
+		return errors.New("max_parallel, max_runs_per_task and timeout_minutes must not be negative")
+	}
 	for name, s := range c.Stages {
 		if !contains(Agents, s.Agent) {
 			return fmt.Errorf("stage %s: agent %q (want %s)", name, s.Agent, strings.Join(Agents, ", "))

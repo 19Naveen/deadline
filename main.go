@@ -160,6 +160,8 @@ func run(argv []string) error {
 		return runPR(path, args[1:])
 	case "notify":
 		return runNotify(path, args[1:])
+	case "loops":
+		return runLoops(path, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
