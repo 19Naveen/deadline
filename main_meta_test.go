@@ -142,11 +142,10 @@ func TestBlockedByAutoBlockAndUnblock(t *testing.T) {
 		t.Errorf("show = %q", out)
 	}
 
-	// move does not sync; the next add/edit does.
-	mustRun(t, "-file", path, "move", dep[:8], "shipped")
-	out = mustRun(t, "-file", path, "edit", dep[:8], "-desc", "done")
+	// Shipping the blocker unblocks its dependant in the same move.
+	out = mustRun(t, "-file", path, "move", dep[:8], "shipped")
 	if !strings.Contains(out, "unblocked "+api.ID[:8]) {
-		t.Errorf("edit output = %q, want an unblocked receipt", out)
+		t.Errorf("move output = %q, want an unblocked receipt", out)
 	}
 	if api = taskByTitle(t, path, "API"); api.Status != task.StatusInDev {
 		t.Errorf("API = %s, want back in indev", api.Status)
@@ -252,5 +251,38 @@ func TestShowAndListAgentFields(t *testing.T) {
 	out = mustRun(t, "-file", path, "list")
 	if !strings.Contains(out, " · claimed by claude · PR #42 · last codex") {
 		t.Errorf("list = %q", out)
+	}
+}
+
+// Shipping a blocker through `move` unblocks its dependants and drops the
+// shipped card's claim, without waiting for a later add or edit.
+func TestMoveReconcilesDependenciesAndClaims(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	b, _ := task.Load(path)
+	b.SetColumns(task.DevColumns)
+	blocker := b.Add("blocker", "", nil, testRef).ID
+	dep := b.Add("dep", "", nil, testRef).ID
+	if err := b.SetBlockedBy(dep, []string{blocker}, testRef); err != nil {
+		t.Fatal(err)
+	}
+	b.SyncBlocked(testRef)
+	if err := b.Claim(blocker, "claude", time.Hour, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := runMove(path, []string{blocker, "shipped"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	b, _ = task.Load(path)
+	got, _ := b.TaskByID(dep)
+	if got.Status != task.StatusTodo {
+		t.Errorf("dependant status = %s, want todo after blocker shipped", got.Status)
+	}
+	if shipped, _ := b.TaskByID(blocker); shipped.ClaimedBy != "" {
+		t.Errorf("claim survived shipping: %q", shipped.ClaimedBy)
 	}
 }

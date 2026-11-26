@@ -408,7 +408,7 @@ func runAdd(path string, args []string) error {
 			return err
 		}
 	}
-	moved := board.SyncBlocked(now)
+	moved := board.Reconcile(now)
 	if err := board.Save(); err != nil {
 		return err
 	}
@@ -602,13 +602,19 @@ func runMove(path string, args []string) error {
 		fmt.Printf("%s %s is already in %s\n", shortID(t.ID), t.Title, to)
 		return nil
 	}
-	if err := board.Move(t.ID, to, time.Now()); err != nil {
+	now := time.Now()
+	if err := board.Move(t.ID, to, now); err != nil {
 		return err
 	}
+	moved := board.Reconcile(now)
 	if err := board.Save(); err != nil {
 		return err
 	}
 	fmt.Printf("moved %s %s: %s → %s\n", shortID(t.ID), t.Title, from, to)
+	if count, limit, over := board.OverWIP(to); over {
+		fmt.Printf("! %s over WIP limit (%d/%d)\n", to, count, limit)
+	}
+	printSynced(board, moved)
 	return nil
 }
 
@@ -732,7 +738,7 @@ func runEdit(path string, args []string) error {
 			return err
 		}
 	}
-	moved := board.SyncBlocked(now)
+	moved := board.Reconcile(now)
 	if err := board.Save(); err != nil {
 		return err
 	}

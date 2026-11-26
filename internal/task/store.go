@@ -180,34 +180,5 @@ func (b *Board) Save() error {
 	if !b.dirty {
 		return nil
 	}
-	dir := filepath.Dir(b.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create dir: %w", err)
-	}
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode board: %w", err)
-	}
-	f, err := os.CreateTemp(dir, "tasks-*.json")
-	if err != nil {
-		return fmt.Errorf("create temp: %w", err)
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("write temp: %w", err)
-	}
-	if err := os.Rename(tmp, b.path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("rename temp: %w", err)
-	}
-	b.dirty = false
-	b.settingsChanged = false
-	b.snapshot()
-	return nil
+	return b.writeLocked()
 }
