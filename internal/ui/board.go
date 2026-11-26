@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +31,8 @@ const (
 	modeMove
 	modeConfirm
 	modeDetail
+	modeSearch // typing a / filter in the footer
+	modeOpen   // choosing a document from the detail popup
 )
 
 // Fields of the add/edit form, in tab order.
@@ -77,6 +78,17 @@ type BoardModel struct {
 	detailScroll int    // detail popup body offset in wrapped rows
 	familyID     string // root task shown by the optional family filter
 
+	search textinput.Model // the / filter while typing
+	query  string          // the active / filter; empty shows every card
+	choice int             // highlighted row in the document chooser
+
+	// opener opens one resolved document path; tests swap it out.
+	opener func(path string) tea.Cmd
+
+	undo     []undoEntry // newest last, at most undoLimit
+	grabSnap []task.Task // the grabbed task before its first shift
+	info     string      // one-shot footer notice, cleared by the next key
+
 	now func() time.Time // injectable clock; tests pin it
 
 	width      int
@@ -87,7 +99,7 @@ type BoardModel struct {
 
 // NewBoardModel wires a board into a fresh page model.
 func NewBoardModel(b *task.Board) BoardModel {
-	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now}
+	m := BoardModel{board: b, focus: focusItem, mode: modeNormal, now: time.Now, opener: openDocument}
 	m.sel = make([]int, len(b.Statuses()))
 
 	line := func(placeholder string, limit int) textinput.Model {
@@ -103,6 +115,8 @@ func NewBoardModel(b *task.Board) BoardModel {
 	m.parent = line("type a task title or ID (optional)", 200)
 	m.attachments = line("reference paths", 4000)
 	m.workingNotes = line("agent document paths", 4000)
+	m.search = line("title, #label, @agent or ID", 200)
+	m.search.Prompt = "/ "
 
 	m.desc = textarea.New()
 	m.desc.Placeholder = "Write details, context, or Markdown…"
@@ -119,6 +133,7 @@ func NewBoardModel(b *task.Board) BoardModel {
 // SetSize records the terminal size for layout.
 func (m *BoardModel) SetSize(w, h int) {
 	m.width, m.height = w, h
+	m.search.Width = max(min(w-40, 48), 10)
 	m.sizeForm()
 }
 
@@ -235,14 +250,18 @@ func (m BoardModel) currentStatus() task.Status { return m.board.Statuses()[m.co
 // board's domain ordering or hiding tasks from other pages.
 func (m BoardModel) visibleByStatus(s task.Status) []task.Task {
 	items := m.board.ByStatus(s)
-	if m.familyID == "" {
+	if !m.filtering() {
 		return items
 	}
 	out := make([]task.Task, 0, len(items))
 	for _, t := range items {
-		if t.ID == m.familyID || t.ParentID == m.familyID {
-			out = append(out, t)
+		if m.familyID != "" && t.ID != m.familyID && t.ParentID != m.familyID {
+			continue
 		}
+		if !matchesQuery(t, m.query) {
+			continue
+		}
+		out = append(out, t)
 	}
 	return out
 }
@@ -358,6 +377,8 @@ func (m BoardModel) View() string {
 		return m.overlay(m.renderForm())
 	case modeConfirm:
 		return m.overlay(m.renderConfirm())
+	case modeOpen:
+		return m.overlay(m.renderOpen())
 	}
 	if need := m.minBoardWidth(); m.width > 0 && m.width < need {
 		msg := fmt.Sprintf("gotodo needs at least %d columns for the %d-column board. This terminal is %d. Widen it, or press tab for the other pages.",
@@ -383,12 +404,7 @@ func (m BoardModel) View() string {
 
 func (m BoardModel) renderColumn(idx int, s task.Status, width int) string {
 	items := m.visibleByStatus(s)
-
-	count := strconv.Itoa(len(items))
-	if m.familyID != "" {
-		count += "/" + strconv.Itoa(len(m.board.ByStatus(s)))
-	}
-	header := HeaderStyle(s).Render(s.Label()) + MutedStyle.Render(" ("+count+")")
+	header := m.columnHeader(s, len(items), width)
 
 	var lines []string
 	lines = append(lines, header, "")
@@ -498,18 +514,30 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 
 	// The countdown sits right-aligned on the title row: the one thing on a
 	// card allowed to be loud.
+	// The priority marker leads the title; an agent's claim sits beside the
+	// countdown, shortened before the title gives up its last 8 cells.
 	prefix := ""
 	if grabbed {
 		prefix = "⇄ "
 	}
-	due := Countdown(t, m.now(), m.board.DoneStatus())
+	if mark := priorityMarker(t.Priority); mark != "" {
+		prefix += mark + " "
+	}
+	right := Countdown(t, m.now(), m.board.DoneStatus())
 	room := inner - lipgloss.Width(prefix)
-	if due != "" {
-		room -= lipgloss.Width(due) + 1
+	if right != "" {
+		room -= lipgloss.Width(right) + 1
+	}
+	if claim := cardClaim(t, m.now(), room-8-1); claim != "" {
+		room -= lipgloss.Width(claim) + 1
+		if right != "" {
+			claim += " "
+		}
+		right = claim + right
 	}
 	title := prefix + truncate(t.Title, max(room, 1))
-	if due != "" {
-		title += strings.Repeat(" ", max(inner-lipgloss.Width(title)-lipgloss.Width(due), 1)) + due
+	if right != "" {
+		title += strings.Repeat(" ", max(inner-lipgloss.Width(title)-lipgloss.Width(right), 1)) + right
 	}
 
 	lines := []string{title}
@@ -607,7 +635,12 @@ type detailLayout struct {
 func (m BoardModel) detailLayout(t task.Task, w int) detailLayout {
 	l := detailLayout{head: m.detailHead(t, w), props: m.detailProps(t, w), body: m.detailBodyLines(t, w)}
 	// Budget the scrolling footer: with its counter it can wrap a row taller.
-	avail := m.detailBudget() - rowsHeight(l.head) - rowsHeight(l.props) - rowsHeight(detailFoot("999–999 / 999", w))
+	foot := rowsHeight(m.detailFoot(t, "999–999 / 999", w))
+	// On a very short terminal the fixed props give way before the frame.
+	if room := max(m.detailBudget()-rowsHeight(l.head)-foot, 0); len(l.props) > room {
+		l.props = l.props[:room]
+	}
+	avail := m.detailBudget() - rowsHeight(l.head) - rowsHeight(l.props) - foot
 	if len(l.props) > 0 {
 		avail-- // blank row between props and body
 	}
@@ -645,7 +678,7 @@ func (m BoardModel) renderDetail() string {
 			rows = append(rows, "")
 		}
 	}
-	rows = append(rows, detailFoot(counter, cw)...)
+	rows = append(rows, m.detailFoot(t, counter, cw)...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
 
@@ -698,6 +731,9 @@ func (m BoardModel) detailProps(t task.Task, width int) []string {
 			sections = append(sections, detailLabel("Parent", "missing", width)+"\n"+indent(MutedStyle.Render(shortTaskID(t.ParentID))))
 		}
 	}
+	if agent := m.agentProps(t, width); len(agent) > 0 {
+		sections = append(sections, strings.Join(agent, "\n"))
+	}
 	var rows []string
 	for i, sec := range sections {
 		if i > 0 {
@@ -708,12 +744,26 @@ func (m BoardModel) detailProps(t task.Task, width int) []string {
 	return rows
 }
 
-// detailFoot is the popup's hint footer. A non-empty counter means the body
-// scrolls: it adds the j/k hint and the window position.
-func detailFoot(counter string, width int) []string {
-	hints := []string{keyHint("s", "Subtask"), keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("esc", "Close")}
+// detailFoot is the popup's hint footer, led by any error. A non-empty
+// counter means the body scrolls: it adds the j/k hint and the window
+// position. o and y appear only when they would do something.
+func (m BoardModel) detailFoot(t task.Task, counter string, width int) []string {
+	var hints []string
+	if m.err != "" {
+		hints = append(hints, errorLine(m.err))
+	}
 	if counter != "" {
-		hints = append([]string{keyHint("j/k", "Scroll")}, append(hints, MutedStyle.Render(counter))...)
+		hints = append(hints, keyHint("j/k", "Scroll"))
+	}
+	if m.awaitingApproval(t) {
+		hints = append(hints, keyHint("y", "Approve"))
+	}
+	if len(taskDocuments(t)) > 0 {
+		hints = append(hints, keyHint("o", "Open"))
+	}
+	hints = append(hints, keyHint("s", "Subtask"), keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("esc", "Close"))
+	if counter != "" {
+		hints = append(hints, MutedStyle.Render(counter))
 	}
 	return popupFoot(width, hints...)
 }
@@ -1276,7 +1326,20 @@ func (m BoardModel) renderFooter() string {
 	if m.err != "" {
 		items = append(items, errorLine(m.err))
 	}
+	if m.info != "" {
+		items = append(items, noticeLine(m.info))
+	}
 	switch {
+	case m.mode == modeSearch:
+		items = append(items, m.search.View(), keyHint("enter", "Keep"), keyHint("esc", "Clear"))
+		return HelpStyle.Render(hintBar(m.width, items...))
+	case m.query != "" && m.mode == modeNormal:
+		items = append(items, statusTag("Search")+" "+MutedStyle.Render(truncate(m.query, 30)),
+			keyHint("esc", "Clear"), keyHint("/", "Edit"))
+		if m.familyID != "" {
+			items = append(items, keyHint("f", "Show all"))
+		}
+		items = append(items, keyHint("enter", "Open"), keyHint("m", "Grab"))
 	case m.mode == modeMove:
 		if m.err == "" {
 			items = append(items, statusTag("Moving"))
@@ -1291,9 +1354,11 @@ func (m BoardModel) renderFooter() string {
 		items = append(items, statusTag("Family")+" "+MutedStyle.Render(truncate(name, 30)),
 			keyHint("f", "Show all"), keyHint("s", "Subtask"), keyHint("enter", "Open"), keyHint("m", "Grab"))
 	default:
-		items = append(items, keyHint("hjkl", "Move"), keyHint("enter", "Open"), keyHint("a", "Add"),
-			keyHint("s", "Subtask"), keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("m", "Grab"),
-			keyHint("f", "Family"), keyHint("ctrl+t", "Focus"))
+		// hjkl and s live in ? help and the detail popup, so the bar still
+		// fits one row at 120 columns with undo and search added.
+		items = append(items, keyHint("enter", "Open"), keyHint("a", "Add"),
+			keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("u", "Undo"),
+			keyHint("/", "Search"), keyHint("m", "Grab"), keyHint("f", "Family"), keyHint("ctrl+t", "Focus"))
 	}
 	return HelpStyle.Render(hintBar(m.width, append(items, globalHints()...)...))
 }
@@ -1316,7 +1381,7 @@ func (m BoardModel) renderConfirm() string {
 	if n := len(m.board.Children(t.ID)); n > 0 {
 		rows = append(rows, MutedStyle.Copy().Width(cw).Render(plural(n, "subtask")+" will stay on the board without a parent."))
 	}
-	rows = append(rows, MutedStyle.Render("This cannot be undone."))
+	rows = append(rows, MutedStyle.Render("Press u on the board to bring it back."))
 	rows = append(rows, popupFoot(cw, keyHint("y", "Delete"), keyHint("n", "Cancel"))...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
@@ -1354,6 +1419,10 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 		return m.updateConfirm(keyMsg)
 	case modeDetail:
 		return m.updateDetail(keyMsg)
+	case modeSearch:
+		return m.updateSearch(keyMsg)
+	case modeOpen:
+		return m.updateOpen(keyMsg)
 	}
 	return m.updateNormal(keyMsg)
 }
@@ -1361,6 +1430,7 @@ func (m BoardModel) Update(msg tea.Msg) (BoardModel, tea.Cmd) {
 // updateNormal handles navigation and focus in the default mode.
 func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 	m.err = ""
+	m.info = ""
 
 	if keyMsg.Type == tea.KeyCtrlT {
 		if m.focus == focusItem {
@@ -1445,9 +1515,53 @@ func (m BoardModel) updateNormal(keyMsg tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.focus = focusItem
 		m.grabID = t.ID
 		m.grabFrom = t.Status
+		m.grabSnap = m.snapshotTasks(t.ID)
+	case "/":
+		m.openSearch()
+		return m, nil
+	case "esc":
+		if m.query != "" {
+			m.search.SetValue("")
+			m.setQuery("")
+			return m, nil
+		}
+	case "u":
+		if m.undoLast() {
+			return m, dirty()
+		}
+		return m, nil
+	case "A":
+		on := !m.board.RequireApproval
+		m.board.SetRequireApproval(on)
+		if on {
+			m.info = "approval on: only you can move cards to " + m.board.DoneStatus().Label()
+		} else {
+			m.info = "approval off: agents may ship on their own"
+		}
+		return m, dirty()
 	}
 	m.clampSelection()
 	return m, nil
+}
+
+// approve ships a card waiting for review, as the human at the keyboard.
+func (m BoardModel) approve(t task.Task) (BoardModel, tea.Cmd) {
+	before := m.snapshotTasks(t.ID)
+	actor := m.board.Actor
+	m.board.Actor = "" // the TUI is always a human, whatever the environment says
+	err := m.board.Move(t.ID, m.board.DoneStatus(), m.now())
+	m.board.Actor = actor
+	if err != nil {
+		m.err = err.Error()
+		return m, nil
+	}
+	m.pushUndo(undoEntry{what: "approve " + t.Title, restore: before, selectID: t.ID})
+	m.mode = modeNormal
+	m.info = "approved: " + t.Title
+	if !m.selectTaskID(t.ID) {
+		m.clampSelection()
+	}
+	return m, dirty()
 }
 
 // dirtyMsg signals that the board changed and should be persisted.
@@ -1510,6 +1624,7 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		}
 
 		selectedID := m.editID
+		before := m.snapshotTasks(m.editID)
 		if m.editID != "" {
 			if err := m.board.EditWithParent(m.editID, parentID, title, desc, deadline, m.now()); err != nil {
 				m.err = err.Error()
@@ -1538,6 +1653,11 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 			m.err = err.Error()
 			m.sizeForm()
 			return m, nil
+		}
+		if m.editID != "" {
+			m.pushUndo(undoEntry{what: "edit " + title, restore: before, selectID: selectedID})
+		} else {
+			m.pushUndo(undoEntry{what: "add " + title, removeID: selectedID})
 		}
 		if m.familyID != "" {
 			if saved, ok := m.board.TaskByID(selectedID); ok {
@@ -1623,7 +1743,16 @@ func (m BoardModel) updateInput(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 // updateDetail handles the detail popup: j/k/g/G scroll, and s/e/d act as on
 // the board.
 func (m BoardModel) updateDetail(k tea.KeyMsg) (BoardModel, tea.Cmd) {
+	m.err = ""
 	switch k.String() {
+	case "o":
+		if t, ok := m.selectedTask(); ok {
+			return m, m.startOpen(t)
+		}
+	case "y":
+		if t, ok := m.selectedTask(); ok && m.awaitingApproval(t) {
+			return m.approve(t)
+		}
 	case "esc", "enter", "q":
 		m.mode = modeNormal
 	case "e":
@@ -1696,8 +1825,12 @@ func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
+		if t, ok := m.board.TaskByID(m.grabID); ok && len(m.grabSnap) > 0 && t.Status != m.grabSnap[0].Status {
+			m.pushUndo(undoEntry{what: "move " + t.Title, restore: m.grabSnap, selectID: t.ID})
+		}
 		m.mode = modeNormal
 		m.grabID = ""
+		m.grabSnap = nil
 		m.clampSelection()
 		return m, dirty()
 	case "esc":
@@ -1707,6 +1840,7 @@ func (m BoardModel) updateMove(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 		m.col = m.board.ColumnIndex(m.grabFrom)
 		m.mode = modeNormal
 		m.grabID = ""
+		m.grabSnap = nil
 		m.clampSelection()
 		return m, dirty()
 	}
@@ -1745,10 +1879,16 @@ func (m BoardModel) updateConfirm(k tea.KeyMsg) (BoardModel, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	ids := []string{t.ID}
+	for _, c := range m.board.Children(t.ID) {
+		ids = append(ids, c.ID)
+	}
+	before := m.snapshotTasks(ids...)
 	if err := m.board.Delete(t.ID); err != nil {
 		m.err = err.Error()
 		return m, nil
 	}
+	m.pushUndo(undoEntry{what: "delete " + t.Title, restore: before, selectID: t.ID})
 	if m.familyID == t.ID {
 		m.familyID = ""
 	}

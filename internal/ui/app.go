@@ -18,6 +18,7 @@ const (
 	pageAnalytics
 	pageArchive
 	pageCalendar
+	pageAgents
 	pageCount
 )
 
@@ -28,6 +29,7 @@ type AppModel struct {
 	analytics AnalyticsModel
 	archive   ArchiveModel
 	calendar  CalendarModel
+	agents    AgentsModel
 	store     *task.Board
 
 	page     page
@@ -52,6 +54,7 @@ func NewApp(b *task.Board) AppModel {
 		analytics: NewAnalyticsModel(b),
 		archive:   NewArchiveModel(b),
 		calendar:  NewCalendarModel(b),
+		agents:    NewAgentsModel(b),
 		store:     b,
 		now:       time.Now,
 	}
@@ -89,6 +92,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.analytics.SetSize(msg.Width, msg.Height)
 		m.archive.SetSize(msg.Width, msg.Height)
 		m.calendar.SetSize(msg.Width, msg.Height)
+		m.agents.SetSize(msg.Width, msg.Height)
+		return m, nil
+
+	case docOpenedMsg:
+		// The editor or opener finished; only a failure needs showing.
+		if msg.Err != nil {
+			m.board.err = "open failed: " + msg.Err.Error()
+		}
 		return m, nil
 
 	case dirtyMsg:
@@ -204,6 +215,8 @@ func (m AppModel) View() string {
 		body = m.archive.View()
 	case m.page == pageCalendar:
 		body = m.calendar.View()
+	case m.page == pageAgents:
+		body = m.agents.View()
 	default:
 		body = m.board.View()
 	}
@@ -241,7 +254,7 @@ func (m AppModel) renderTabs() string {
 		Foreground(lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#1a1b26"}).Background(ColAccent)
 	inactive := MutedStyle.Copy().Padding(0, 2)
 
-	names := [pageCount]string{"Board", "Analytics", "Archive", "Calendar"}
+	names := [pageCount]string{"Board", "Analytics", "Archive", "Calendar", "Agents"}
 	tabs := make([]string, 0, len(names))
 	for i, n := range names {
 		if page(i) == m.page {
@@ -266,19 +279,19 @@ func helpSection(title string, rows [][2]string) string {
 // renderHelp is the key reference panel: two columns when wide, stacked when narrow.
 func (m AppModel) renderHelp() string {
 	left := helpSection("Navigation", [][2]string{
-		{"tab", "next page"},
-		{"h l", "previous / next column"},
-		{"j k", "previous / next task"},
+		{"tab", "next page (… Agents)"},
+		{"hjkl", "move between columns, tasks"},
 		{"g G", "first / last in column"},
 		{"ctrl+t", "column / item focus"},
 		{"enter", "open the selected task"},
 	}) + "\n\n" + helpSection("Tasks", [][2]string{
-		{"a", "add a task"},
-		{"s", "add a subtask"},
-		{"e", "edit the selected task"},
-		{"d", "delete (asks first)"},
+		{"a s", "add a task / subtask"},
+		{"e d", "edit / delete (asks first)"},
 		{"m", "grab, h/l move, enter drop"},
 		{"f", "show only this family"},
+		{"/", "search: words #label @agent"},
+		{"u", "undo the last change"},
+		{"A", "toggle the approval gate"},
 	})
 	urgency := func(u task.Urgency, s string) string {
 		return lipgloss.NewStyle().Foreground(UrgencyColor(u)).Render("● " + s)
@@ -287,23 +300,24 @@ func (m AppModel) renderHelp() string {
 		{"tab", "next field"},
 		{"ctrl+j", "new line in description"},
 		{"deadline", "hjkl pick a day, t today"},
-		{"worktree", "path or branch, optional"},
 		{"parent", "type to filter, ↑/↓ enter"},
 		{"enter", "save, esc cancel"},
+	}) + "\n\n" + helpSection("Open task", [][2]string{
+		{"o", "open attachment or note"},
+		{"y", "approve: ship from review"},
 	}) + "\n\n" + helpSection("Pages", [][2]string{
 		{"archive", "j/k select"},
 		{"calendar", "h/l month, t today"},
 		{"? q", "this help, quit"},
-	}) + "\n\n" + helpSection("Deadlines", [][2]string{
-		{urgency(task.UrgencyFuture, "green"), "more than 3 days left"},
-		{urgency(task.UrgencySoon, "amber"), "3 days or fewer"},
-		{urgency(task.UrgencyUrgent, "red"), "1 day or fewer, or late"},
 	})
+	legend := MutedStyle.Render("Deadlines  ") + urgency(task.UrgencyFuture, "more than 3 days") + "  " +
+		urgency(task.UrgencySoon, "3 days or fewer") + "  " + urgency(task.UrgencyUrgent, "1 day or late")
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right)
 	if lipgloss.Width(body)+4 > m.width && m.width > 0 {
 		body = left + "\n\n" + right
 	}
+	body += "\n\n" + lipgloss.NewStyle().MaxWidth(max(lipgloss.Width(body), 1)).Render(legend)
 	w := lipgloss.Width(body)
 	rows := append([]string{TitleStyle.Render("Keys"), MutedStyle.Render(strings.Repeat("─", w)), body},
 		popupFoot(w, keyHint("any key", "Close"))...)
