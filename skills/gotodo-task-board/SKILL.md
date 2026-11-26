@@ -94,7 +94,7 @@ Record user-provided reference documents with repeatable `-attachment PATH` flag
 - After opening a PR for a card: `gotodo pr <id> <pr-url>`.
 - `gotodo pr sync` (needs an authenticated `gh`) ships cards whose PRs merged and blocks cards whose CI fails. Use `-dry-run` if unsure. If it says `gh` is missing or not logged in, tell the human; do not try to log in.
 - For a status update, run `gotodo standup -format markdown` and paste the output rather than hand-writing a summary.
-- `gotodo serve` and `gotodo notify -watch` are long-running human tools; do not start them unless asked.
+- `gotodo notify -watch` is a long-running human tool; do not start it unless asked.
 
 ## Rules
 

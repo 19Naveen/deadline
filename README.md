@@ -431,7 +431,6 @@ gotodo pr 3fa1c9e2 42                        # link a pull request
 gotodo pr sync                               # ship merged PRs, block failing CI (needs gh)
 gotodo standup -format markdown              # what happened in the last 24 hours
 gotodo mcp                                   # serve the board over MCP (stdio)
-gotodo serve                                 # read-only web board on 127.0.0.1:7777
 gotodo notify -watch                         # desktop alerts for blocked, review, due
 ```
 
@@ -615,8 +614,8 @@ If `gotodo` is not on the client's `PATH`, give the full path to
 
 ## Reports and integrations
 
-All local. GitHub is reached only through your installed `gh` CLI, the web view
-binds only to loopback, and notifications go only to your desktop.
+All local. GitHub is reached only through your installed `gh` CLI, and
+notifications go only to your desktop.
 
 ### Standup
 
@@ -664,26 +663,6 @@ action, `would …` in dry-run. If `gh` is missing or not logged in it says so
 (`gh auth login`) and exits non-zero, as it does when any PR could not be
 checked. gotodo never reads or stores GitHub tokens.
 
-### Read-only web board
-
-```bash
-gotodo serve                         # http://127.0.0.1:7777/
-gotodo serve -addr 127.0.0.1:8080
-```
-
-The board in a browser, dark like the TUI: columns with WIP limits, cards with
-coloured countdowns, priority, labels, live claims and PR links.
-`GET /api/board` returns the same as JSON (`board`, `require_approval`,
-`generated_at`, `version`, `columns[]` with `cards[]`); the page polls it every
-5 seconds and reloads when `version` changes.
-
-- Binds only to loopback (`127.0.0.0/8`, `::1`, `localhost`); `0.0.0.0`, `:7777` and LAN addresses are refused.
-- GET and HEAD only. There are no write endpoints.
-- Non-loopback `Host` headers are refused (DNS rebinding).
-- Task text is escaped by `html/template`, with a per-request CSP nonce plus `nosniff`, `no-referrer` and `DENY` framing.
-
-Ctrl+C stops it.
-
 ### Desktop notifications
 
 ```bash
@@ -709,9 +688,9 @@ go vet ./...
 gofmt -l .
 ```
 
-`internal/task` is the model and the JSON store, `internal/stats` is pure analytics, and `internal/ui` contains the five Bubble Tea tabs: Board, Analytics, Archive, Calendar and Agents. Around them sit `internal/mcp` (the MCP server), `internal/gh` (the `gh` wrapper behind `pr sync`), `internal/report` (standup), `internal/web` (`serve`) and `internal/notify`. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic. Tests never call the real `gh` or send real notifications.
+`internal/task` is the model and the JSON store, `internal/stats` is pure analytics, and `internal/ui` contains the five Bubble Tea tabs: Board, Analytics, Archive, Calendar and Agents. Around them sit `internal/mcp` (the MCP server), `internal/gh` (the `gh` wrapper behind `pr sync`), `internal/report` (standup) and `internal/notify`. Nothing in `internal/task` or `internal/stats` calls `time.Now` — the clock is always passed in, which is what makes the tests deterministic. Tests never call the real `gh` or send real notifications.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more — the MCP server and web view are standard library.
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Three dependencies, no more — the MCP server is standard library.
 
 ---
 

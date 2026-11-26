@@ -82,7 +82,6 @@ var helpGroups = []struct {
 		{name: "standup", usage: "gotodo standup [-since 24h|7d] [-format text|markdown]", summary: "summarise recent activity"},
 		{name: "pr", usage: "gotodo pr <id> <url|number> | gotodo pr sync [-dry-run]", summary: "link PRs; sync merged/failing PRs via gh",
 			details: []string{"sync ships cards whose PR merged and blocks cards whose CI fails. Needs an authenticated gh CLI."}},
-		{name: "serve", usage: "gotodo serve [-addr 127.0.0.1:7777]", summary: "read-only web board on this machine only"},
 		{name: "notify", usage: "gotodo notify [-watch] [-interval 1m]", summary: "desktop alerts for blocked, review-ready and due cards"},
 	}},
 	{"Other", []helpEntry{

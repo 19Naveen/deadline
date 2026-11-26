@@ -43,7 +43,7 @@ func TestHelpCommandsAreAllDispatched(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "board.json")
 	for _, g := range helpGroups {
 		for _, e := range g.commands {
-			if e.name == "help" || e.name == "init" || e.name == "mcp" || e.name == "serve" || e.name == "notify" {
+			if e.name == "help" || e.name == "init" || e.name == "mcp" || e.name == "notify" {
 				continue // run elsewhere, or long-running
 			}
 			captureStdout(t, func() {

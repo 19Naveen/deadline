@@ -208,15 +208,6 @@ func TestPRSyncNoLinkedTasksSkipsGH(t *testing.T) {
 	}
 }
 
-func TestServeRejectsNonLoopback(t *testing.T) {
-	path := devBoardFile(t, func(*task.Board) {})
-	for _, addr := range []string{"0.0.0.0:7777", ":7777", "10.0.0.1:80"} {
-		if err := run([]string{"-file", path, "serve", "-addr", addr}); err == nil {
-			t.Errorf("serve -addr %s accepted", addr)
-		}
-	}
-}
-
 type cmdFakeSender struct{ sent []string }
 
 func (f *cmdFakeSender) Send(title, body string) error {
