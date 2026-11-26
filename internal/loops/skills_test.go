@@ -26,3 +26,13 @@ func TestInstalledSkillsFindsDirsAndPlugins(t *testing.T) {
 		t.Errorf("codex skills = %v, want none", got)
 	}
 }
+
+func TestInstalledSkillsFindsOpenCodeGitPlugins(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".cache", "opencode", "npm", "git-pstack-x", "123", "node_modules", "pstack", "plugins", "pstack", "skills", "poteto-mode")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("x"), 0o644)
+	if got := installedSkillsIn("opencode", home, filepath.Join(home, ".config")); len(got) != 1 || got[0] != "poteto-mode" {
+		t.Errorf("opencode skills = %v", got)
+	}
+}

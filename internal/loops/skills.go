@@ -26,8 +26,10 @@ func skillRoots(agent, home, configHome string) (dirs, pluginGlobs []string) {
 	case "opencode":
 		// OpenCode also reads Claude Code and shared skill directories.
 		return []string{filepath.Join(configHome, "opencode", "skills"), filepath.Join(home, ".claude", "skills"), shared},
-			[]string{filepath.Join(home, ".cache", "opencode", "packages", "*", "*", "skills"),
-				filepath.Join(home, ".cache", "opencode", "packages", "*", "*", "plugins", "*", "skills")}
+			// Git plugins are cached as npm packages:
+			// ~/.cache/opencode/npm/<plugin>/<stamp>/node_modules/<pkg>/[plugins/<name>/]skills
+			[]string{filepath.Join(home, ".cache", "opencode", "npm", "*", "*", "node_modules", "*", "skills"),
+				filepath.Join(home, ".cache", "opencode", "npm", "*", "*", "node_modules", "*", "plugins", "*", "skills")}
 	}
 	return nil, nil
 }
