@@ -1,6 +1,8 @@
-// Package wizard is the interactive `gotodo setup`: it registers the MCP
-// server with the chosen agents, optionally installs skill packs, and
-// writes the stage-loops config. NonInteractive is the scripted path.
+// Package wizard is the interactive `gotodo setup`: it asks whether to
+// connect coding agents at all, then registers the MCP server and installs
+// the gotodo skill and instructions for the chosen agents, optionally
+// installs skill packs, and writes the stage-loops config. NonInteractive
+// is the scripted path.
 package wizard
 
 import (
@@ -233,19 +235,19 @@ func configExists(path string) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-// NonInteractive is `gotodo setup -yes` and the no-terminal path: register
-// the MCP server with every installed agent (as before the wizard), and
+// NonInteractive is `gotodo setup -yes` and the no-terminal path: connect
+// every installed agent (MCP server, gotodo skill, instruction block), and
 // write default loops only when asked with -loops and no config exists.
 // Packs are never installed without a person choosing them.
 func NonInteractive(d Deps, o Options, w io.Writer) error {
 	failed := 0
 	registered := false
-	for _, r := range agentsetup.Install(d.MCP) {
+	for _, r := range append(agentsetup.Install(d.MCP), agentsetup.Wire(d.MCP)...) {
 		fmt.Fprintln(w, r)
 		switch r.Action {
 		case "failed":
 			failed++
-		case "registered", "updated":
+		case "registered", "updated", "installed", "added":
 			registered = true
 		}
 	}
@@ -258,7 +260,7 @@ func NonInteractive(d Deps, o Options, w io.Writer) error {
 		fmt.Fprintln(w, "loops:      off (run gotodo setup in a terminal to set them up)")
 	}
 	if registered {
-		fmt.Fprintln(w, "Restart open agent sessions to load the gotodo MCP server.")
+		fmt.Fprintln(w, "Restart open agent sessions to load the gotodo MCP server and skill.")
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d setup step(s) failed", failed)

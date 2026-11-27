@@ -170,7 +170,7 @@ func (m Model) hints() []string {
 	}
 	switch m.scr {
 	case scrWelcome:
-		return []string{keyHint("enter", "Start"), keyHint("q", "Quit")}
+		return []string{keyHint("↑↓", "Choose"), keyHint("enter", "Start"), keyHint("q", "Quit")}
 	case scrMCP:
 		return []string{keyHint("↑↓", "Move"), keyHint("space", "Toggle"), keyHint("enter", "Next"), keyHint("esc", "Back")}
 	case scrPacks:
@@ -187,6 +187,9 @@ func (m Model) hints() []string {
 	case scrStages:
 		return []string{keyHint("↑↓", "Stage"), keyHint("←→", "Field"), keyHint("space", "Change"), keyHint("enter", "Next"), keyHint("esc", "Back")}
 	case scrSummary:
+		if m.personal {
+			return []string{keyHint("enter", "Finish"), keyHint("esc", "Back"), keyHint("q", "Quit")}
+		}
 		return []string{keyHint("enter", "Apply"), keyHint("esc", "Back"), keyHint("q", "Quit")}
 	case scrApply:
 		if m.finished {
@@ -271,32 +274,49 @@ func (m Model) welcomeView(w, room int) (string, string, []string) {
 		}
 	}
 
-	var agents []string
-	for _, a := range loops.Agents {
-		if _, ok := m.paths[a]; ok {
-			agents = append(agents, okStyle.Render("✓ ")+textStyle.Render(a))
-		} else {
-			agents = append(agents, mutedStyle.Render("· "+a))
-		}
-	}
+	b := []string{head, rule, card, mark, "",
+		"  " + textStyle.Render(beat.caption), ""}
+	b = append(b, m.welcomeChoices(w)...)
 
+	// The logo goes first when the terminal is short; the tagline then
+	// moves to the subtitle line.
 	title := titleStyle.Render("gotodo")
-	tagline := mutedStyle.Render("a kanban board you share with your coding agents")
-	if len(logo)+8 <= room {
+	tagline := "a kanban board for you, and your coding agents if you use them"
+	if len(logo)+1+len(b) <= room {
+		taglines := []string{"", "a kanban board for you,", "and your coding agents if you use them"}
 		var l []string
 		for i, row := range logo {
 			line := accentStyle.Render(row)
-			if i == 1 {
-				line += "   " + tagline
+			if taglines[i] != "" {
+				line += "   " + mutedStyle.Render(taglines[i])
 			}
 			l = append(l, line)
 		}
 		title, tagline = strings.Join(l, "\n"), ""
 	}
-	b := []string{head, rule, card, mark, "",
-		"  " + textStyle.Render(beat.caption), "",
-		"  " + strings.Join(agents, "   ")}
 	return title, tagline, b
+}
+
+// welcomeChoices is the first question: connect coding agents, or keep
+// gotodo to yourself. The agent line lists the CLIs found on PATH.
+func (m Model) welcomeChoices(w int) []string {
+	sel := m.cur[scrWelcome]
+	agents := "connect " + strings.Join(m.detected, ", ")
+	if len(m.detected) == 0 {
+		agents = "no claude, codex or opencode CLI found yet"
+	}
+	opt := func(i int, label, desc string) string {
+		st := textStyle
+		if sel == i {
+			st = boldStyle
+		}
+		return m.newRow(sel == i).add(radioStyle(sel == i)).space(1).
+			cell(st, label, 24).add(mutedStyle, trunc(desc, w-28)).line(w)
+	}
+	return []string{
+		opt(welcomeAgents, "With my coding agents", agents),
+		opt(welcomeJustMe, "Just me", "a personal board, no agent setup"),
+	}
 }
 
 var mcpWhere = map[string]string{
@@ -326,8 +346,10 @@ func (m Model) mcpView(w int) (string, string, []string) {
 		r.add(checkStyle(m.mcpOn[a])).space(1).cell(boldStyle, a, 11).add(mutedStyle, mcpWhere[a])
 		b = append(b, r.line(w))
 	}
-	b = append(b, "", mutedStyle.Render("Agents load it on their next start. Unticked agents are left as they are."))
-	return titleStyle.Render("MCP server"), "Register gotodo with your agents so they can read and move cards.", b
+	b = append(b, "",
+		mutedStyle.Render("Also adds the gotodo skill, and its workflow to CLAUDE.md / AGENTS.md."),
+		mutedStyle.Render("Agents load them on their next start. Unticked agents are left as they are."))
+	return titleStyle.Render("MCP server"), "Connect gotodo to your agents so they can read and move cards.", b
 }
 
 func (m Model) loopsView(w int) (string, string, []string) {
@@ -554,11 +576,14 @@ func (m Model) fieldHelp(row, col int) string {
 
 func (m Model) summaryView(w int) (string, string, []string) {
 	label := func(s string) string { return headStyle.Render(pad(strings.ToUpper(s), 13)) }
-	mcp := textStyle.Render(strings.Join(m.mcpChosen(), ", "))
+	if m.personal {
+		return m.personalSummary(label)
+	}
+	mcp := textStyle.Render(strings.Join(m.mcpChosen(), ", ")) + mutedStyle.Render(" · MCP server, skill, instructions")
 	if len(m.mcpChosen()) == 0 {
 		mcp = mutedStyle.Render("none")
 	}
-	b := []string{label("MCP server") + mcp}
+	b := []string{label("Agents") + mcp}
 	packs, shared := m.packLines()
 	if len(packs) == 0 {
 		packs = []string{mutedStyle.Render("none")}
@@ -609,6 +634,20 @@ func (m Model) summaryView(w int) (string, string, []string) {
 		b = append(append(b, ""), notes...)
 	}
 	return titleStyle.Render("Review and apply"), "Nothing has changed yet. Enter applies everything below.", b
+}
+
+// personalSummary is the "Just me" summary: nothing to apply. Agents that
+// were connected before are left as they are; removing them is a command,
+// never a side effect of this screen.
+func (m Model) personalSummary(label func(string) string) (string, string, []string) {
+	b := []string{label("Agents") + textStyle.Render("not connected") +
+		mutedStyle.Render(" (run gotodo setup any time to connect them)")}
+	if len(m.connected) > 0 {
+		b = append(b, "",
+			mutedStyle.Render("Already connected: "+strings.Join(m.connected, ", ")+". Left as they are;"),
+			mutedStyle.Render("run gotodo setup -remove to disconnect them."))
+	}
+	return titleStyle.Render("Review"), "Just you: a personal board. Nothing to install.", b
 }
 
 // packLines is one summary line per chosen pack, and whether an npx
@@ -704,30 +743,51 @@ func (m Model) applyView(w, room int) (string, string, []string) {
 		if s.State == stepRunning {
 			label = boldStyle
 		}
-		line := m.stepMark(s) + " " + label.Render(pad(s.Label, 28)) + mutedStyle.Render(trunc(detail, w-30-8))
+		// Labels get 28 cells and always one space before the detail.
+		line := m.stepMark(s) + " " + label.Render(pad(trunc(s.Label, 27), 28)) + mutedStyle.Render(trunc(detail, w-30-8))
 		b = append(b, padR(line, w-len(t))+mutedStyle.Render(t))
 	}
 	return amberStyle.Render("Applying…"), "Steps run one at a time; a failed step does not stop the rest.", b
 }
 
+// tryNext is one "Try next" line: a command and what it does.
+func tryNext(cmd, what string) string {
+	return "  " + accentStyle.Render(pad(cmd, 14)) + mutedStyle.Render(what)
+}
+
+// personalDone closes the "Just me" path: nothing ran, so it says what
+// to do with the board instead of what changed.
+func (m Model) personalDone() (string, string, []string) {
+	b := []string{
+		"  " + headStyle.Render(pad("Agents", 14)) + mutedStyle.Render("not connected (run gotodo setup any time to connect them)"),
+		"", section("Try next"),
+		tryNext("gotodo", "open your board"),
+		tryNext("gotodo help", "every command"),
+	}
+	return okStyle.Render("✓ gotodo is ready"), "Done · " + m.appliedAt.Format("02/01/2006 15:04") + " · a personal board, no agent setup", b
+}
+
 func (m Model) doneView(w, room int) (string, string, []string) {
+	if m.personal {
+		return m.personalDone()
+	}
 	failed := 0
-	var mcp []string
+	groups := map[string][]string{} // mcp, skill, instructions → marked agents
 	var packs, rest []step
 	for _, s := range m.steps {
 		if s.State == stepFailed {
 			failed++
 		}
 		switch s.Group {
-		case "mcp":
-			mcp = append(mcp, m.stepMark(s)+" "+textStyle.Render(strings.TrimPrefix(s.Label, "MCP · ")))
+		case "mcp", "skill", "instructions":
+			groups[s.Group] = append(groups[s.Group], m.stepMark(s)+" "+textStyle.Render(s.Agent))
 		case "pack":
 			packs = append(packs, s)
 		default:
 			rest = append(rest, s)
 		}
 	}
-	label := func(s string) string { return "  " + headStyle.Render(pad(s, 12)) }
+	label := func(s string) string { return "  " + headStyle.Render(pad(s, 14)) }
 	stepLine := func(l string, s step) string {
 		detail := ""
 		switch {
@@ -744,13 +804,15 @@ func (m Model) doneView(w, room int) (string, string, []string) {
 	} else {
 		b = append(b, section("What changed"))
 	}
-	if len(mcp) > 0 {
-		b = append(b, label("MCP server")+strings.Join(mcp, mutedStyle.Render(" · ")))
+	for _, g := range []struct{ key, name string }{{"mcp", "MCP server"}, {"skill", "Agent skill"}, {"instructions", "Instructions"}} {
+		if len(groups[g.key]) > 0 {
+			b = append(b, label(g.name)+strings.Join(groups[g.key], mutedStyle.Render(" · ")))
+		}
 	}
 	next := []string{"", section("Try next"),
-		"  " + accentStyle.Render(pad("gotodo", 14)) + mutedStyle.Render("open the board"),
-		"  " + accentStyle.Render(pad("gotodo loops", 14)) + mutedStyle.Render("see stage loops and their runs"),
-		"  " + accentStyle.Render(pad("gotodo help", 14)) + mutedStyle.Render("every command")}
+		tryNext("gotodo", "open the board"),
+		tryNext("gotodo loops", "see stage loops and their runs"),
+		tryNext("gotodo help", "every command")}
 	budget := room - 3 - len(b) - len(rest) - len(next)
 	if budget < len(packs) { // tight: lose the blank lines instead
 		next = next[1:]

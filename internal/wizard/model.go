@@ -73,6 +73,12 @@ type packItem struct {
 	custom int // itemCustom: index into customs
 }
 
+// Welcome choices.
+const (
+	welcomeAgents = iota // With my coding agents
+	welcomeJustMe        // Just me
+)
+
 const (
 	itemRecommend = iota
 	itemSkip
@@ -117,6 +123,9 @@ type Model struct {
 
 	existing *existingConfig
 	replace  bool
+
+	personal  bool     // "Just me": no agent setup at all
+	connected []string // agents that already have gotodo files, by display name
 
 	rows        []StageRow
 	stageCol    int
@@ -174,6 +183,10 @@ func New(d Deps, o Options) Model {
 		}
 	}
 	m.setRecommend(len(m.offered()) > 0)
+	if len(m.detected) == 0 {
+		m.cur[scrWelcome] = welcomeJustMe // nothing to connect: personal by default
+	}
+	m.connected = agentsetup.Connected(d.MCP)
 	if o.Loops != nil {
 		m.loops, m.loopsPreset = *o.Loops, true
 	}
@@ -330,6 +343,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.next()
 	}
 	switch m.scr {
+	case scrWelcome:
+		m.list(k, 2, nil)
 	case scrMCP:
 		m.list(k, len(m.detected), func(i int) { m.mcpOn[m.detected[i]] = !m.mcpOn[m.detected[i]] })
 	case scrLoops:
@@ -576,7 +591,11 @@ func (m Model) next() (tea.Model, tea.Cmd) {
 	var to screen
 	switch m.scr {
 	case scrWelcome:
+		m.personal = m.cur[scrWelcome] == welcomeJustMe
 		to = scrMCP
+		if m.personal {
+			to = scrSummary
+		}
 	case scrMCP:
 		switch {
 		case len(m.detected) == 0:
@@ -593,6 +612,10 @@ func (m Model) next() (tea.Model, tea.Cmd) {
 		to = scrSummary
 		if m.loops {
 			to = scrPacks
+		} else {
+			// Skills only serve loops; with loops off the user never saw the
+			// Skills screen, so install nothing they didn't choose.
+			m.setRecommend(false)
 		}
 	case scrPacks:
 		to = scrStages
@@ -650,6 +673,9 @@ func (m Model) Report() []string {
 	if len(m.steps) == 0 && !m.finished {
 		return []string{"Setup cancelled; nothing was changed."}
 	}
+	if m.personal {
+		return []string{"Agents: not connected (run gotodo setup any time to connect them)."}
+	}
 	var out []string
 	if !m.finished {
 		out = append(out, "Aborted; steps not reported as ok may not have run or may be half done.")
@@ -689,7 +715,8 @@ const (
 
 type step struct {
 	Label  string
-	Group  string // "mcp", "pack" or "loops", for the done screen
+	Group  string // "mcp", "skill", "instructions", "pack" or "loops", for the done screen
+	Agent  string // display name, for the agent groups
 	State  stepState
 	Detail string
 	Took   time.Duration
@@ -711,14 +738,34 @@ type stepDoneMsg struct {
 	detail string
 }
 
-var agentNames = map[string]string{"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
+var agentNames = agentsetup.AgentNames
 
+// agentStep turns a skill or instructions result into a step outcome.
+func agentStep(r agentsetup.Result) (stepState, string) {
+	switch r.Action {
+	case "failed":
+		return stepFailed, r.Detail
+	case "skipped":
+		return stepSkipped, r.Detail
+	}
+	if r.Detail != "" {
+		return stepOK, r.Action + ": " + r.Detail
+	}
+	return stepOK, r.Action
+}
+
+// buildSteps is what apply runs. "Just me" runs nothing: no agent file is
+// touched. Otherwise each ticked agent gets the MCP server, the gotodo
+// skill and (Claude Code, Codex) the instruction block.
 func (m Model) buildSteps() []step {
+	if m.personal {
+		return nil
+	}
 	var steps []step
+	env := m.d.MCP
 	for _, a := range m.mcpChosen() {
 		a := a
-		env := m.d.MCP
-		steps = append(steps, step{Label: "MCP · " + agentNames[a], Group: "mcp", run: func() (stepState, string) {
+		steps = append(steps, step{Label: "MCP · " + agentNames[a], Group: "mcp", Agent: agentNames[a], run: func() (stepState, string) {
 			res := agentsetup.InstallFor(env, []string{a})
 			if len(res) == 0 {
 				return stepSkipped, "unknown agent"
@@ -736,6 +783,19 @@ func (m Model) buildSteps() []step {
 			}
 			return stepOK, detail
 		}})
+	}
+	for _, a := range m.mcpChosen() {
+		a := a
+		steps = append(steps, step{Label: "Agent skill · " + agentNames[a], Group: "skill", Agent: agentNames[a],
+			run: func() (stepState, string) { return agentStep(agentsetup.InstallSkill(env, a)) }})
+	}
+	for _, a := range m.mcpChosen() {
+		if agentsetup.InstructionsFile(env, a) == "" {
+			continue
+		}
+		a := a
+		steps = append(steps, step{Label: "Instructions · " + agentNames[a], Group: "instructions", Agent: agentNames[a],
+			run: func() (stepState, string) { return agentStep(agentsetup.InstallInstructions(env, a)) }})
 	}
 	for _, u := range m.installUnits() {
 		u := u

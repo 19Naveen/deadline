@@ -1,7 +1,8 @@
-// Package agentsetup registers gotodo's MCP server with the coding agents
-// installed on this machine (Claude Code, Codex, OpenCode), so users never
-// edit agent configs by hand. Every step is idempotent, leaves the rest of
-// each config alone, and skips agents that are not installed.
+// Package agentsetup connects gotodo to the coding agents installed on this
+// machine (Claude Code, Codex, OpenCode): it registers the MCP server and
+// installs the gotodo skill and instruction block, so users never edit
+// agent configs by hand. Every step is idempotent, leaves the rest of each
+// config alone, and skips agents that are not installed.
 package agentsetup
 
 import (
@@ -26,6 +27,7 @@ type Env struct {
 	Home       string // user home directory
 	ConfigHome string // XDG config dir (~/.config)
 	Binary     string // absolute path of the gotodo binary to register
+	Assets     Assets // skill and instruction block (see wiring.go)
 	DryRun     bool
 	// LookPath finds an agent CLI; Run executes one and returns its output.
 	LookPath func(string) (string, error)
@@ -62,15 +64,20 @@ func runCommand(name string, args ...string) (string, error) {
 // Result is one agent's outcome, printed one line each.
 type Result struct {
 	Agent  string
+	Item   string // "" for the MCP server, else "skill" or "instructions"
 	Action string // registered, updated, already registered, removed, skipped…
 	Detail string
 }
 
 func (r Result) String() string {
-	if r.Detail == "" {
-		return fmt.Sprintf("%-11s %s", r.Agent+":", r.Action)
+	label, width := r.Agent+":", 11
+	if r.Item != "" {
+		label, width = r.Agent+" "+r.Item+":", 25
 	}
-	return fmt.Sprintf("%-11s %s (%s)", r.Agent+":", r.Action, r.Detail)
+	if r.Detail == "" {
+		return fmt.Sprintf("%-*s %s", width, label, r.Action)
+	}
+	return fmt.Sprintf("%-*s %s (%s)", width, label, r.Action, r.Detail)
 }
 
 // Install registers the MCP server with every installed agent.

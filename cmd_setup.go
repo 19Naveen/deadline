@@ -10,16 +10,21 @@ import (
 	"gotodo/internal/wizard"
 )
 
-const setupUsage = "usage: gotodo setup [-yes] [-loops | -no-loops] [-remove] [-dry-run]"
+const setupUsage = "usage: gotodo setup [-yes] [-loops | -no-loops] [-no-agents] [-remove] [-dry-run]"
+
+// noAgentsNote is what setup says when the user keeps gotodo to themselves.
+const noAgentsNote = "Agents: not connected (run gotodo setup any time to connect them)."
 
 // runSetup is the setup wizard in a terminal, and with -yes (or without a
-// terminal) the scripted path: register gotodo's MCP server with every
-// installed coding agent. -remove and -dry-run skip the wizard.
+// terminal) the scripted path: connect every installed coding agent (MCP
+// server, gotodo skill, instruction block). -no-agents connects nothing;
+// -remove and -dry-run skip the wizard.
 func runSetup(args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	remove := fs.Bool("remove", false, "unregister the MCP server instead")
+	remove := fs.Bool("remove", false, "disconnect every agent: MCP server, skill and instruction block")
 	dryRun := fs.Bool("dry-run", false, "report what would change without writing")
-	yes := fs.Bool("yes", false, "no questions: register the MCP server with every agent")
+	yes := fs.Bool("yes", false, "no questions: connect every installed agent")
+	noAgents := fs.Bool("no-agents", false, "personal use only: no agent setup at all")
 	loopsOn := fs.Bool("loops", false, "set up stage loops (with -yes: write defaults if no config exists)")
 	noLoops := fs.Bool("no-loops", false, "skip stage loops")
 	if err := fs.Parse(args); err != nil {
@@ -34,13 +39,21 @@ func runSetup(args []string) error {
 	if *loopsOn && *noLoops {
 		return fmt.Errorf("-loops and -no-loops conflict (%s)", setupUsage)
 	}
+	if *noAgents && (*remove || *loopsOn) {
+		return fmt.Errorf("-no-agents conflicts with -remove and -loops (%s)", setupUsage)
+	}
+	if *noAgents {
+		fmt.Println(noAgentsNote)
+		return nil
+	}
 	if *remove || *dryRun {
-		return setupMCPOnly(*remove, *dryRun)
+		return setupScripted(*remove, *dryRun)
 	}
 	d, err := wizard.DefaultDeps()
 	if err != nil {
 		return err
 	}
+	d.MCP.Assets = agentAssets()
 	var o wizard.Options
 	switch {
 	case *loopsOn:
@@ -69,29 +82,30 @@ func isTerminal(f *os.File) bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// setupMCPOnly is -remove and -dry-run: the MCP registration alone.
-func setupMCPOnly(remove, dryRun bool) error {
+// setupScripted is -remove (disconnect every agent) and -dry-run (preview
+// connecting them), with no wizard.
+func setupScripted(remove, dryRun bool) error {
 	env, err := agentsetup.DefaultEnv()
 	if err != nil {
 		return err
 	}
 	env.DryRun = dryRun
-	results := agentsetup.Install
+	env.Assets = agentAssets()
+	var results []agentsetup.Result
 	if remove {
-		results = agentsetup.Remove
+		results = append(agentsetup.Remove(env), agentsetup.Unwire(env)...)
+	} else {
+		results = append(agentsetup.Install(env), agentsetup.Wire(env)...)
 	}
 	failed := 0
-	for _, r := range results(env) {
+	for _, r := range results {
 		fmt.Println(r)
 		if r.Action == "failed" {
 			failed++
 		}
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d agent(s) could not be set up", failed)
-	}
-	if !remove && !dryRun {
-		fmt.Println("Restart open agent sessions to load the gotodo MCP server.")
+		return fmt.Errorf("%d agent step(s) failed", failed)
 	}
 	return nil
 }

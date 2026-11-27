@@ -11,11 +11,11 @@
 #   3. Clones the repo to a temp dir and builds the `gotodo` binary
 #   4. Installs it to ~/.local/bin (or --dir) and adds that dir to PATH
 #      in ~/.bashrc and ~/.zshrc (idempotent — never appends twice)
-#   5. Installs the `deadline` agent skill for Claude Code, Codex, OpenCode
-#      and other Agent-Skills-compatible tools
-#   6. Runs `gotodo setup`: an interactive wizard when a terminal is
-#      available (MCP server, optional skill packs and stage loops),
-#      otherwise the non-interactive MCP registration only
+#   5. Runs `gotodo setup`, which owns everything agent-related: in a
+#      terminal a wizard that first asks "with my coding agents" or "just
+#      me"; without one `setup -yes` (MCP server, gotodo skill and the
+#      CLAUDE.md / AGENTS.md block for every installed agent). With
+#      --no-agents nothing agent-related is touched: a personal board.
 set -euo pipefail
 
 : "${HOME:?HOME must be set}"
@@ -31,9 +31,11 @@ GO_MIN_MAJOR=1
 GO_MIN_MINOR=22
 UNINSTALL=0
 # Passed through to `gotodo setup`: SETUP_YES skips the wizard,
-# SETUP_LOOPS is "", -loops or -no-loops.
+# SETUP_LOOPS is "", -loops or -no-loops, SETUP_NO_AGENTS skips every
+# agent step (a personal board only).
 SETUP_YES=0
 SETUP_LOOPS=""
+SETUP_NO_AGENTS=0
 
 # --- pretty output ------------------------------------------------------
 if [ -t 1 ]; then
@@ -84,25 +86,34 @@ while [ $# -gt 0 ]; do
       SETUP_LOOPS="-loops"; shift ;;
     --no-loops)
       SETUP_LOOPS="-no-loops"; shift ;;
+    --no-agents)
+      SETUP_NO_AGENTS=1; shift ;;
     -h|--help)
       cat <<'EOF'
-gotodo installer: a terminal kanban board for you and your coding agents.
+gotodo installer: a terminal kanban board for you, and your coding agents
+if you use them.
 Usage:
   curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --no-agents
   curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --dir ~/.local/bin
   curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --uninstall
 Options:
   --dir PATH      install directory (default ~/.local/bin)
   --repo O/N      GitHub repo (default 19Naveen/deadline)
   --branch NAME   git branch (default main)
-  --yes           no setup wizard: register the MCP server with every agent
+  --no-agents     personal board only: no agent skill, instructions, MCP
+                  server or loops (connect agents later with gotodo setup)
+  --yes           no setup wizard: connect every installed agent (MCP
+                  server, gotodo skill, CLAUDE.md / AGENTS.md block)
   --loops         set up stage loops (wizard skips the question; with --yes,
                   writes default loops if ~/.config/gotodo/loops.json is absent)
   --no-loops      skip stage loops
-  --uninstall     remove the binary, skills and PATH lines (boards kept)
+  --uninstall     disconnect agents, remove the binary and PATH lines
+                  (boards kept)
   -h, --help      show this help
 After building, the installer runs `gotodo setup`: a wizard when a terminal
-is available, else `gotodo setup -yes -no-loops` (MCP registration only).
+is available (its first question: with your coding agents, or just you),
+else `gotodo setup -yes -no-loops`. With --no-agents: `gotodo setup -no-agents`.
 Env overrides: DEADLINE_REPO, DEADLINE_BRANCH
 EOF
       exit 0 ;; 
@@ -332,41 +343,48 @@ ensure_path_in_rc() {
   esac
 }
 
-# uninstall_gotodo removes the binary, the agent skills and the PATH lines
-# this script added. Boards are data, not installation, so they stay:
-# ~/.config/gotodo and ./.deadline in projects survive for reinstalls.
+# uninstall_gotodo disconnects the agents, then removes the binary and the
+# PATH lines this script added. Boards are data, not installation, so they
+# stay: ~/.config/gotodo and ./.deadline in projects survive for reinstalls.
 uninstall_gotodo() {
-  # Unregister the MCP server from agents while the binary still exists.
-  if [ -x "$INSTALL_DIR/$BINARY" ]; then
-    "$INSTALL_DIR/$BINARY" setup -remove || warn "Could not unregister the gotodo MCP server from every agent."
+  local bin="$INSTALL_DIR/$BINARY" rc tmp
+  # `setup -remove` takes out the MCP server, skill and instruction blocks
+  # while the binary still exists. A missing binary, or one older than the
+  # in-binary agent wiring, gets the bash fallback for skills and blocks.
+  if [ -x "$bin" ]; then
+    "$bin" setup -remove || warn "Could not disconnect gotodo from every agent."
   fi
-  rm -f "$INSTALL_DIR/$BINARY"
-  info "Removed $INSTALL_DIR/$BINARY (if present)."
-  local dest rc tmp
-  for dest in \
-    "$HOME/.claude/skills/deadline" \
-    "$HOME/.codex/skills/deadline" \
-    "$HOME/.agents/skills/deadline" \
-    "$HOME/.config/opencode/skills/deadline" \
-    "$HOME/.claude/skills/gotodo-task-board" \
-    "$HOME/.codex/skills/gotodo-task-board" \
-    "$HOME/.agents/skills/gotodo-task-board" \
-    "$HOME/.config/opencode/skills/gotodo-task-board"; do
-    if [ -e "$dest" ]; then
-      rm -rf "$dest"
-      info "Removed $dest"
-    fi
-  done
+  if [ ! -x "$bin" ] || ! "$bin" setup -h 2>&1 | grep -q -- '-no-agents'; then
+    remove_agent_files_fallback
+  fi
+  rm -f "$bin"
+  info "Removed $bin (if present)."
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
     [ -f "$rc" ] || continue
     tmp="$(mktemp)"
     awk '/^# added by deadline installer/ { pending=1; next } pending { pending=0; if (/^export PATH=/) next } { print }' "$rc" > "$tmp" && cat "$tmp" > "$rc"
     rm -f "$tmp"
   done
-  strip_deadline_block "$HOME/.claude/CLAUDE.md"
-  strip_deadline_block "$HOME/.codex/AGENTS.md"
-  info "Removed the gotodo workflow from global instruction files (if present)."
   info "Uninstall complete. Boards kept — delete ~/.config/gotodo and ./.deadline too for a full wipe."
+}
+
+# remove_agent_files_fallback removes the agent skill and instruction
+# blocks without the binary (normally `gotodo setup -remove` does this).
+remove_agent_files_fallback() {
+  local codex="${CODEX_HOME:-$HOME/.codex}"
+  local opencode="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  local dir name
+  for dir in "$HOME/.claude/skills" "$codex/skills" "$HOME/.agents/skills" "$opencode/skills"; do
+    for name in deadline gotodo-task-board; do
+      if [ -e "$dir/$name" ]; then
+        rm -rf "${dir:?}/$name"
+        info "Removed $dir/$name"
+      fi
+    done
+  done
+  strip_deadline_block "$HOME/.claude/CLAUDE.md"
+  strip_deadline_block "$codex/AGENTS.md"
+  info "Removed the gotodo workflow from global instruction files (if present)."
 }
 
 # strip_deadline_block removes a previously installed deadline instruction
@@ -381,74 +399,27 @@ strip_deadline_block() {
   rm -f "$tmp"
 }
 
-# install_global_instructions wires the deadline workflow into Claude Code
-# (~/.claude/CLAUDE.md) and Codex (~/.codex/AGENTS.md) unconditionally: both
-# auto-read their global instruction file every session, while a skill alone
-# is only invoked when the model happens to pick it. $1 is the cloned repo
-# root. Re-runs replace the old block instead of duplicating it.
-install_global_instructions() {
-  local src="$1/skills/gotodo-task-board/AGENTS.snippet.md"
-  [ -f "$src" ] || { warn "AGENTS snippet missing, skipping global instructions."; return 0; }
-  local dest
-  for dest in \
-    "$HOME/.claude/CLAUDE.md" \
-    "$HOME/.codex/AGENTS.md"; do
-    mkdir -p "$(dirname "$dest")"
-    [ -f "$dest" ] || touch "$dest"
-    strip_deadline_block "$dest"
-    if [ -s "$dest" ] && [ -n "$(tail -c 1 "$dest")" ]; then
-      printf '\n' >> "$dest"
-    fi
-    cat "$src" >> "$dest"
-    info "Added the gotodo workflow to $dest"
-  done
-}
-
-# install_skill copies the agent skill into every well-known skills dir so
-# Claude Code, Codex, OpenCode and other Agent-Skills-compatible tools pick
-# it up without further setup. $1 is the cloned repo root.
-install_skill() {
-  local src="$1/skills/gotodo-task-board/SKILL.md"
-  [ -f "$src" ] || { warn "Skill source missing, skipping agent setup."; return 0; }
-  local dest
-  # Remove the old generic skill name: leaving both installed gives agents
-  # two competing copies and lets stale instructions keep surfacing.
-  for dest in \
-    "$HOME/.claude/skills/deadline" \
-    "$HOME/.codex/skills/deadline" \
-    "$HOME/.agents/skills/deadline" \
-    "$HOME/.config/opencode/skills/deadline"; do
-    rm -rf "$dest"
-  done
-  for dest in \
-    "$HOME/.claude/skills/gotodo-task-board/SKILL.md" \
-    "$HOME/.codex/skills/gotodo-task-board/SKILL.md" \
-    "$HOME/.agents/skills/gotodo-task-board/SKILL.md" \
-    "$HOME/.config/opencode/skills/gotodo-task-board/SKILL.md"; do
-    mkdir -p "$(dirname "$dest")"
-    cp "$src" "$dest"
-    info "Agent skill installed to $dest"
-  done
-}
-
 # have_tty reports whether the wizard can talk to a person. The script is
 # usually piped into bash, so stdin is the pipe: the wizard reads /dev/tty.
 have_tty() {
   [ -t 1 ] && [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null
 }
 
-# run_setup registers the MCP server with Claude Code, Codex and OpenCode,
-# through the wizard when interactive. Safe to repeat.
+# run_setup hands everything agent-related to `gotodo setup`: the wizard
+# when interactive, else -yes (every installed agent), or nothing at all
+# with --no-agents. Safe to repeat.
 run_setup() {
   local bin="$INSTALL_DIR/$BINARY"
-  if [ "$SETUP_YES" -eq 0 ] && have_tty; then
+  if [ "$SETUP_NO_AGENTS" -eq 1 ]; then
+    "$bin" setup -no-agents || warn "Setup did not finish; run 'gotodo setup' later."
+  elif [ "$SETUP_YES" -eq 0 ] && have_tty; then
     info "Starting the gotodo setup wizard…"
     "$bin" setup ${SETUP_LOOPS:+"$SETUP_LOOPS"} </dev/tty >/dev/tty \
       || warn "Setup did not finish; run 'gotodo setup' later."
   else
-    info "Registering the gotodo MCP server with installed agents…"
+    info "Connecting gotodo to installed coding agents (skip with --no-agents)…"
     "$bin" setup -yes "${SETUP_LOOPS:--no-loops}" \
-      || warn "MCP setup did not finish for every agent; run 'gotodo setup' later."
+      || warn "Agent setup did not finish for every agent; run 'gotodo setup' later."
   fi
 }
 
@@ -489,8 +460,6 @@ else
   ) || die "go build failed."
   chmod +x "$INSTALL_DIR/$BINARY"
 fi
-install_skill "$workdir/src"
-install_global_instructions "$workdir/src"
 run_setup
 trap - EXIT
 rm -rf "$workdir"

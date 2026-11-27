@@ -161,18 +161,28 @@ Fifth page. Who is working on the board, read-only, refreshed whenever the board
 
 Needs Go 1.22 or newer, and a terminal at least 80 columns wide.
 
+gotodo works as a personal board on its own: you don't need a coding agent, and you can skip every agent step. Connecting Claude Code, Codex or OpenCode is optional, and you can do it later with `gotodo setup`.
+
 **Quick install** (Debian, Ubuntu, Arch, Fedora, openSUSE, Alpine — sets up `~/.bashrc` and `~/.zshrc` automatically):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash
 ```
 
-The script detects your distro (`apt`, `pacman`, `dnf`/`yum`, `zypper`, `apk`), installs `git` and Go ≥ 1.22 if missing (falling back to an official Go toolchain in `~/.local/go` when the distro package is too old or root is unavailable), builds `gotodo` into `~/.local/bin`, and adds it to `PATH` in both `~/.bashrc` and `~/.zshrc` without duplicating lines. It also installs the `deadline` agent skill for Claude Code, Codex, OpenCode and other Agent-Skills-compatible tools, so coding agents can log work to project boards. Restart your terminal afterwards, then run `gotodo`.
+**Personal board only** (no agent skill, no instruction files, no MCP server, no loops):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --no-agents
+```
+
+The script detects your distro (`apt`, `pacman`, `dnf`/`yum`, `zypper`, `apk`), installs `git` and Go ≥ 1.22 if missing (falling back to an official Go toolchain in `~/.local/go` when the distro package is too old or root is unavailable), builds `gotodo` into `~/.local/bin`, and adds it to `PATH` in both `~/.bashrc` and `~/.zshrc` without duplicating lines. Then it runs `gotodo setup`, which handles everything agent-related. The installer itself never writes agent files. Restart your terminal afterwards, then run `gotodo`.
+
+**Connecting agents.** For each agent you choose (and only for agents installed on this machine), `gotodo setup` registers the gotodo MCP server, installs the `gotodo-task-board` skill (`~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`, `~/.agents/skills`), and adds a marked workflow block to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. The skill and the block ship inside the binary, so they always match your gotodo version. `gotodo setup -remove` takes all of it out again and leaves the rest of those files alone. To connect agents after a `--no-agents` install, run `gotodo setup`.
 
 **Setup wizard.** When the installer has a terminal it finishes with `gotodo setup`, a short full-screen wizard (nothing changes until you confirm on its summary screen):
 
-1. **Welcome**: which agent CLIs were found (`claude`, `codex`, `opencode`).
-2. **MCP**: tick the agents to register the gotodo MCP server with.
+1. **Welcome**: a small animated board, then the first question: **With my coding agents** (the default when `claude`, `codex` or `opencode` is found) or **Just me** (the default when none is). **Just me** goes straight to the summary and changes nothing agent-related. If agents were connected before, it leaves them connected and tells you about `gotodo setup -remove`.
+2. **MCP**: tick the agents to connect: the MCP server, the gotodo skill and the instruction block.
 3. **Stage loops?** (default No): when a card enters a column, gotodo starts an agent with a skill on it. Change them any time with `gotodo loops` or `gotodo setup`.
 4. **Skill packs**: per agent, whether [pstack](https://github.com/michael-denyer/pstack-claude) and [mattpocock/skills](https://github.com/mattpocock/skills) are present; tick missing ones to install. A pack already present from any source is never offered again. An *other skills* column counts the skills each agent already has from anywhere else, including the current project. **+ add a skill pack…** installs your own pack: a GitHub `owner/repo`, a git or https URL, or a local folder with at least one `SKILL.md` (up to two levels down), for the agents you tick, with `npx skills add <source> -g -a <agents> -s '*' -y`. Add as many as you like; `d` removes one. Codex and OpenCode packs are one shared install in `~/.agents/skills` (needs `npx`; update later with `npx skills update -g`).
 5. **Stages**: per development column (todo, indev, testing-review, blocked, shipped): on/off, agent, model, skill and access (`readonly`, `edits`, `full`, shown as a coloured tag). The skill field suggests every skill the agent can load, user and project (marked `(project)`), or takes any name; a skill that is not installed gets a quiet note that loops will skip it until it is. Switching a stage to `full` shows a one-line warning until the next key. Defaults: indev and testing-review on with Claude, `edits` access. Personal boards (doing/done) are set with `gotodo loops set`.
@@ -180,7 +190,7 @@ The script detects your distro (`apt`, `pacman`, `dnf`/`yum`, `zypper`, `apk`), 
 
 The wizard follows `NO_COLOR` (tags become `[brackets]`) and fits an 80x18 terminal.
 
-Without a terminal (CI, `--yes`) the installer runs `gotodo setup -yes -no-loops`, which only registers the MCP server. Installer flags pass through: `--yes` skips the wizard, `--loops` / `--no-loops` preset the loops question (with `--yes`, `--loops` writes default loops when no config exists). Run `gotodo setup` again any time; `gotodo setup -dry-run` previews the MCP changes.
+Without a terminal (CI, `--yes`) the installer runs `gotodo setup -yes -no-loops`, which connects every installed agent (MCP server, skill, instruction block) and sets up no loops. Installer flags pass through: `--no-agents` runs `gotodo setup -no-agents` (nothing agent-related at all), `--yes` skips the wizard, `--loops` / `--no-loops` preset the loops question (with `--yes`, `--loops` writes default loops when no config exists). Run `gotodo setup` again any time; `gotodo setup -dry-run` previews the agent changes.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --yes --no-loops
@@ -194,7 +204,7 @@ cd deadline
 go build -trimpath -ldflags "-s -w" -o ~/.local/bin/gotodo .
 ```
 
-**Upgrade:** re-run the installer — it rebuilds only when `main` moved past your installed copy (checked via `gotodo version`), otherwise it just re-syncs the skill and PATH lines.
+**Upgrade:** re-run the installer. It rebuilds only when `main` moved past your installed copy (checked via `gotodo version`), then runs `gotodo setup` again, which refreshes the skill and instruction block for the agents you connect.
 
 **Uninstall:**
 
@@ -202,7 +212,7 @@ go build -trimpath -ldflags "-s -w" -o ~/.local/bin/gotodo .
 curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --uninstall
 ```
 
-This removes the binary, the agent skills and the PATH lines it added. Boards are data, not installation, so `~/.config/gotodo` and `.deadline/` in projects are kept — delete them too for a full wipe.
+This runs `gotodo setup -remove` (MCP server, agent skill and instruction blocks), then removes the binary and the PATH lines it added. Boards are data, not installation, so `~/.config/gotodo` and `.deadline/` in projects are kept — delete them too for a full wipe.
 
 Then run it:
 
@@ -592,7 +602,8 @@ the approval gate) come back as tool results with `isError: true` and a
 readable message, so the model can fix the call.
 
 **You don't need to set anything up.** `install.sh` runs `gotodo setup`,
-which registers the server with every agent it finds: Claude Code (user
+which (unless you choose **Just me** or pass `--no-agents`) registers the
+server with every agent it finds: Claude Code (user
 scope, via `claude mcp add`), Codex (a marked block in
 `~/.codex/config.toml`) and OpenCode (merged into
 `~/.config/opencode/opencode.json`), each with its own `GOTODO_AGENT`. Each

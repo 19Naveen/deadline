@@ -85,7 +85,8 @@ func newFixture(t *testing.T, agents []string, skills map[string][]string, npx b
 		Run:      rec.run,
 		Skills:   func(a string) []string { return skills[a] },
 		MCP: agentsetup.Env{Home: home, ConfigHome: filepath.Join(home, ".config"), Binary: "/opt/gotodo",
-			LookPath: look, Run: rec.mcpRun},
+			LookPath: look, Run: rec.mcpRun,
+			Assets: agentsetup.Assets{Skill: []byte("---\nname: gotodo-task-board\n---\n"), Snippet: []byte(testSnippet)}},
 		ConfigPath: filepath.Join(home, ".config", "gotodo", "loops.json"),
 		Home:       home,
 		Now:        func() time.Time { return time.Date(2026, 11, 26, 13, 5, 0, 0, time.UTC) },
@@ -240,9 +241,127 @@ func TestLoopsPreset(t *testing.T) {
 	}
 }
 
+const testSnippet = "<!-- deadline:begin - managed -->\n## GoTodo\n<!-- deadline:end -->\n"
+
+// agentFiles lists every file under home: what setup wrote.
+func agentFiles(t *testing.T, home string) []string {
+	t.Helper()
+	var out []string
+	filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(home, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	return out
+}
+
+// "Just me" is the default with no agent CLI, and with agents a choice
+// away: it goes straight to the summary, touches no agent file, shows the
+// agent steps as skipped and ends on how to use the board.
+func TestJustMeWritesNothing(t *testing.T) {
+	f := newFixture(t, nil, nil, false)
+	m := New(f.d, Options{})
+	if m.cur[scrWelcome] != welcomeJustMe {
+		t.Fatal("no agents found: Just me should be the default")
+	}
+	if v := m.View(); !strings.Contains(v, "◉ Just me") || !strings.Contains(v, "no claude, codex or opencode CLI found") {
+		t.Fatalf("welcome:\n%s", v)
+	}
+
+	f = newFixture(t, all3(), map[string][]string{}, true)
+	on := true
+	m = New(f.d, Options{Loops: &on})
+	if m.cur[scrWelcome] != welcomeAgents {
+		t.Fatal("agents found: With my coding agents should be the default")
+	}
+	if v := m.View(); !strings.Contains(v, "◉ With my coding agents") || !strings.Contains(v, "connect claude, codex, opencode") {
+		t.Fatalf("welcome:\n%s", v)
+	}
+	m = press(t, m, "down", "enter")
+	if m.scr != scrSummary || !m.personal {
+		t.Fatalf("Just me → %v, want Summary", m.scr)
+	}
+	v := m.View()
+	for _, want := range []string{"not connected", "run gotodo setup any time to connect them", "– MCP", "– Loops", "– Skills", "– Stages", "enter Finish"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("Just me summary lacks %q:\n%s", want, v)
+		}
+	}
+	if strings.Contains(v, "-remove") {
+		t.Errorf("nothing was connected before; no remove hint expected:\n%s", v)
+	}
+	m = press(t, m, "enter")
+	if !m.finished || len(m.steps) != 0 {
+		t.Fatalf("Just me should run no steps: %v", m.steps)
+	}
+	if got := agentFiles(t, f.home); len(got) != 0 || len(f.rec.mcp) != 0 || len(f.rec.packs) != 0 {
+		t.Fatalf("Just me touched the machine: files %v, mcp %v, packs %v", got, f.rec.mcp, f.rec.packs)
+	}
+	v = m.View()
+	for _, want := range []string{"gotodo is ready", "TRY NEXT", "gotodo help", "open your board", "no agent setup"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("Just me done screen lacks %q:\n%s", want, v)
+		}
+	}
+	if strings.Contains(v, "gotodo loops") || strings.Contains(v, "restart open agent") {
+		t.Errorf("Just me done screen should not talk about agents:\n%s", v)
+	}
+	if rep := strings.Join(m.Report(), "\n"); !strings.Contains(rep, "Agents: not connected") || strings.Contains(rep, "Restart") {
+		t.Errorf("report = %s", rep)
+	}
+}
+
+// Picking Just me after agents were connected changes nothing and points
+// at the command that disconnects them.
+func TestJustMeKeepsEarlierConnection(t *testing.T) {
+	f := newFixture(t, all3(), nil, true)
+	md := filepath.Join(f.home, ".claude", "CLAUDE.md")
+	os.MkdirAll(filepath.Dir(md), 0o755)
+	os.WriteFile(md, []byte("mine\n"+testSnippet), 0o644)
+	m := press(t, New(f.d, Options{}), "down", "enter")
+	if v := m.View(); !strings.Contains(v, "Already connected: Claude Code") || !strings.Contains(v, "gotodo setup -remove") {
+		t.Fatalf("summary should mention the earlier connection:\n%s", v)
+	}
+	m = press(t, m, "enter")
+	if data, _ := os.ReadFile(md); string(data) != "mine\n"+testSnippet {
+		t.Fatalf("Just me changed CLAUDE.md: %q", data)
+	}
+}
+
+// With my coding agents adds the skill and instruction steps per agent.
+func TestAgentsPathWiresSkillAndInstructions(t *testing.T) {
+	f := newFixture(t, []string{"claude", "opencode"}, nil, true)
+	off := false
+	m := press(t, New(f.d, Options{Loops: &off}), "enter", "enter", "enter")
+	if !m.finished {
+		t.Fatalf("not finished on %v", m.scr)
+	}
+	var labels []string
+	for _, s := range m.steps {
+		labels = append(labels, s.Label)
+		if s.State != stepOK {
+			t.Errorf("step %s: %s", s.Label, s.result())
+		}
+	}
+	want := []string{"MCP · Claude Code", "MCP · OpenCode", "Agent skill · Claude Code", "Agent skill · OpenCode", "Instructions · Claude Code"}
+	if len(labels) < len(want) || !reflect.DeepEqual(labels[:len(want)], want) {
+		t.Fatalf("steps = %q", labels)
+	}
+	for _, p := range []string{".claude/skills/gotodo-task-board/SKILL.md", ".claude/CLAUDE.md", ".config/opencode/skills/gotodo-task-board/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(f.home, p)); err != nil {
+			t.Errorf("%s not written", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.home, ".codex")); err == nil {
+		t.Error("codex is not installed, yet ~/.codex was created")
+	}
+}
+
 func TestNoAgentsSkipsLoops(t *testing.T) {
 	f := newFixture(t, nil, nil, false)
-	m := press(t, New(f.d, Options{}), "enter")
+	m := press(t, New(f.d, Options{}), "up", "enter") // With my coding agents
 	if !strings.Contains(m.View(), "No coding agent CLI found") {
 		t.Fatal("MCP screen should say no agents were found")
 	}
@@ -649,8 +768,14 @@ func TestNonInteractiveMCPOnly(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.home, ".codex", "config.toml")); err != nil {
 		t.Error("codex MCP not registered")
 	}
-	if s := out.String(); !strings.Contains(s, "Claude Code: registered") || !strings.Contains(s, "loops:      off") {
+	if s := out.String(); !strings.Contains(s, "Claude Code: registered") || !strings.Contains(s, "Claude Code skill:") ||
+		!strings.Contains(s, "Codex instructions:") || !strings.Contains(s, "loops:      off") {
 		t.Fatalf("output:\n%s", s)
+	}
+	for _, p := range []string{".claude/skills/gotodo-task-board/SKILL.md", ".claude/CLAUDE.md", ".codex/AGENTS.md", ".agents/skills/gotodo-task-board/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(f.home, p)); err != nil {
+			t.Errorf("-yes should install %s", p)
+		}
 	}
 }
 
@@ -707,6 +832,10 @@ func screensAt(t *testing.T, w, h int) map[string]string {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m = next.(Model)
 	views := map[string]string{"welcome": m.View()}
+	p := press(t, m, "down", "enter")
+	m.cur = map[screen]int{} // the maps are shared with p: start m over
+	views["justme-summary"] = p.View()
+	views["justme-done"] = press(t, p, "enter").View()
 	m = press(t, m, "enter")
 	views["mcp"] = m.View()
 	m = press(t, m, "enter")
@@ -816,5 +945,18 @@ func TestWelcomeExplainsGotodo(t *testing.T) {
 	m = press(t, m, "enter")
 	if _, cmd := m.Update(welcomeTickMsg{}); cmd != nil {
 		t.Error("ticks should stop after leaving the welcome screen")
+	}
+}
+
+// With loops off the Skills screen is skipped, so no pack installs.
+func TestLoopsOffInstallsNoPacks(t *testing.T) {
+	f := newFixture(t, all3(), map[string][]string{}, true)
+	m := New(f.d, Options{})
+	if !m.recommend {
+		t.Fatal("recommended should start chosen when packs are missing")
+	}
+	m = press(t, m, "enter", "enter", "enter") // welcome, MCP, loops = No
+	if m.scr != scrSummary || m.recommend || len(m.installUnits()) != 0 {
+		t.Fatalf("loops off should install no packs: screen %v recommend %v units %d", m.scr, m.recommend, len(m.installUnits()))
 	}
 }

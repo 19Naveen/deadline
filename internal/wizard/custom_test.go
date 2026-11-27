@@ -333,12 +333,12 @@ func TestApplyAndDoneScreens(t *testing.T) {
 	next, cmd := m.Update(keyMsg("enter")) // start applying, run nothing yet
 	m = next.(Model)
 	v := m.View()
-	if m.finished || !strings.Contains(v, "Applying…") || !strings.Contains(v, "0/8") || !strings.Contains(v, "running") {
+	if m.finished || !strings.Contains(v, "Applying…") || !strings.Contains(v, "0/13") || !strings.Contains(v, "running") {
 		t.Fatalf("apply screen:\n%s", v)
 	}
 	m = drain(m, cmd)
 	v = m.View()
-	for _, want := range []string{"✓ gotodo is set up", "WHAT CHANGED", "MCP server", "✓ Claude Code", "✓ mattpocock → claude", "✓ mattpocock → codex, opencode",
+	for _, want := range []string{"✓ gotodo is set up", "WHAT CHANGED", "MCP server", "✓ Claude Code", "Agent skill", "Instructions", "✓ mattpocock → claude", "✓ mattpocock → codex, opencode",
 		"wrote ~/.config/gotodo/loops.json", "TRY NEXT", "gotodo loops", "gotodo help", "26/11/2026 13:05"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("done screen lacks %q:\n%s", want, v)
