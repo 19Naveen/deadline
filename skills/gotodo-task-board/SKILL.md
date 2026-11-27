@@ -10,8 +10,8 @@ Track dev work on a per-project kanban board with the `gotodo` CLI. Project and 
 ## Setup
 
 1. **Identify yourself:** `export GOTODO_AGENT=<your-name>` (e.g. `claude`, `codex`, `opencode`) before any gotodo command. Moves, claims and the Agents tab record you under that name; without it you count as the human.
-2. **Initialize project tracking:** for work in a repository or project, run `gotodo init` from its project root. It reuses an existing ancestor board or creates one, and may add `.deadline/` to `.gitignore`. Do not initialize for unrelated personal tasks; respect higher-priority restrictions on writes.
-3. **Inspect:** `gotodo board` prints the board type, columns, WIP limits and whether shipping needs approval. Never guess the pipeline. Personal boards use `todo → doing → done`; development boards use `todo → indev → testing-review → shipped`; both may use `blocked`.
+2. **Use the right board.** Work in a code repository goes on that repository's project board. The personal board is for the user's personal tasks only, never for repo work.
+3. **Inspect:** run `gotodo board` first, from inside the repository. It prints the board type, columns and `path: <file> (project|personal)`. If it says `personal` while you are in a repo, run `gotodo init` (gotodo also does this automatically on your first change). Linked git worktrees share the main checkout's board. Never guess the pipeline: personal boards use `todo → doing → done`; development boards use `todo → indev → testing-review → shipped`; both may use `blocked`.
 4. **MCP:** if a `gotodo` MCP server is connected, its tools (`board`, `list_tasks`, `show_task`, `add_task`, `move_task`, `edit_task`, `delete_task`, `next_task`, `claim_task`, `release_task`, `task_context`) do the same as the commands below; prefer them over shelling out.
 
 ## Workflow
@@ -41,8 +41,8 @@ Before every `gotodo add` (task or subtask), gather and pass all of these. Skip 
 | Blockers | `-blocked-by` (repeatable) | Tasks that must ship first. |
 | Deadline | `-deadline DD/MM/YYYY` | When the user gave a date or one is implied. |
 | Worktree | `-worktree` | The worktree path or branch when not working in the main checkout. Check with `git rev-parse --show-toplevel` and `git branch --show-current`. |
-| Attachments | `-attachment` (repeatable) | Every user-provided reference for this task: specs, .docx/.pdf/.xlsx, screenshots, tickets, files the user pointed you at. |
-| Working notes | `-working-note` (repeatable) | Every plan or notes file you or another workflow wrote for this task (`docs/task.md`, `phase2.md`, `frontend.md`, handover docs). |
+| Attachments | `-attachment` (repeatable) | Every user-provided reference for this task: specs, .docx/.pdf/.xlsx, screenshots, tickets, files the user pointed you at. Project-relative paths. |
+| Working notes | `-working-note` (repeatable) | Every plan or notes file you or another workflow wrote for this task (`docs/task.md`, `phase2.md`, `frontend.md`, handover docs). Must live inside the project; see **Task documents**. |
 
 Pass a multi-line description with a quoted heredoc:
 
@@ -118,7 +118,9 @@ If a move to done/shipped is refused because the board requires approval, leave 
 
 ## Task documents
 
-Record user-provided reference documents with repeatable `-attachment PATH` flags, and agent-prepared plans or working documents (including `docs/task.md`, `phase2.md`, or `frontend.md` created by other workflow skills) with repeatable `-working-note PATH` flags on `add` or `edit`. Use project-relative paths; files are referenced, not copied. On `edit`, these flags replace the whole list, so check `gotodo show <id>` first and include paths to keep; `-attachment ""` or `-working-note ""` clears a list. Keep working notes current — `gotodo context` shows them to the next agent. Do not create or link unrelated documents merely to fill a field.
+Record user-provided reference documents with repeatable `-attachment PATH` flags, and agent-prepared plans or working documents (including `docs/task.md`, `phase2.md`, or `frontend.md` created by other workflow skills) with repeatable `-working-note PATH` flags on `add` or `edit`. Use project-relative paths; files are referenced, not copied.
+
+Linked files must be inside the project: `docs/`, `notes/`, or `.deadline/notes/` for notes that should not be committed. Never link temp, scratchpad or session directories (`/tmp`, a `scratchpad/` dir, `~/.cache`): they disappear and the next agent cannot read them. If you drafted a note in a scratch dir, copy it into the project first and link that path. On `edit`, these flags replace the whole list, so check `gotodo show <id>` first and include paths to keep; `-attachment ""` or `-working-note ""` clears a list. Keep working notes current — `gotodo context` shows them to the next agent. Do not create or link unrelated documents merely to fill a field.
 
 ## Pull requests and reports
 
@@ -129,6 +131,8 @@ Record user-provided reference documents with repeatable `-attachment PATH` flag
 
 ## Rules
 
+- Repo work goes on the repo's project board, never the personal board. `gotodo board` shows which one you are on.
+- Working notes and attachments are project-relative files inside the project, never temp or session directories.
 - One card per work item; `list` first, then `add` only when it is really new.
 - Never move a card forward with unmet acceptance criteria, failing checks, or a skipped phase of the skill you were asked to use. Finish one card before starting the next.
 - Never create a title-only card or subtask: every card gets a description in the template, plus priority, labels and any worktree, attachments and working notes that apply.

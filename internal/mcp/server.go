@@ -48,12 +48,34 @@ const serverInstructions = `gotodo is the kanban board for this project. Log eve
 call board first to learn the columns (todo → indev → testing-review → shipped on development boards,
 todo → doing → done on personal ones; both may use blocked), list_tasks to avoid duplicates,
 add_task before starting work, then move_task through the columns as the work progresses.
+Work in a git repository goes on its project board (board shows the path; your first change creates
+the board if missing). Link working notes as project-relative files inside the project, never temp dirs.
 Task IDs accept any unique prefix (the 8-character short IDs shown in output). Dates are DD/MM/YYYY.`
+
+// BoardRef is the board one tool call runs against.
+type BoardRef struct {
+	// Path is the board file the call loads and saves.
+	Path string
+	// Scope names the board in the board tool: "project", "personal" or
+	// "file". Blank omits it.
+	Scope string
+	// Note is a hint the board tool appends (e.g. the repository has no
+	// project board yet).
+	Note string
+	// Created reports that resolving this call initialised the board; the
+	// tool's reply says so.
+	Created bool
+}
 
 // Config configures a Server.
 type Config struct {
-	// Path is the board file every tool call loads and saves.
+	// Path is the board file every tool call loads and saves when Resolve
+	// is nil.
 	Path string
+	// Resolve picks the board for each tool call, so the server follows
+	// the same rules as the CLI. write is true for tools that change the
+	// board; only those may create one. Nil means always Path.
+	Resolve func(write bool) (BoardRef, error)
 	// Version is reported as serverInfo.version.
 	Version string
 	// Agent is the GOTODO_AGENT name; when blank the client's
@@ -69,7 +91,7 @@ type Config struct {
 
 // Server is one MCP session over a pair of streams.
 type Server struct {
-	path    string
+	resolve func(write bool) (BoardRef, error)
 	version string
 	agent   string // from GOTODO_AGENT; wins over clientInfo
 	client  string // lowercased clientInfo.name from initialize
@@ -82,7 +104,7 @@ type Server struct {
 // NewServer builds a server from cfg.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		path:    cfg.Path,
+		resolve: cfg.Resolve,
 		version: cfg.Version,
 		agent:   strings.TrimSpace(cfg.Agent),
 		log:     cfg.Log,
@@ -100,6 +122,10 @@ func NewServer(cfg Config) *Server {
 	}
 	if s.tools == nil {
 		s.tools = DefaultTools()
+	}
+	if s.resolve == nil {
+		path := cfg.Path
+		s.resolve = func(bool) (BoardRef, error) { return BoardRef{Path: path}, nil }
 	}
 	s.byName = make(map[string]*Tool, len(s.tools))
 	for i := range s.tools {
@@ -285,8 +311,13 @@ func (s *Server) initialize(params json.RawMessage) (any, error) {
 		}
 	}
 	s.client = strings.ToLower(strings.TrimSpace(p.ClientInfo.Name))
+	// Read-only resolution: opening a session never creates a board.
+	where := "an unresolved board"
+	if ref, err := s.resolve(false); err == nil {
+		where = ref.Path
+	}
 	fmt.Fprintf(s.log, "gotodo mcp: client %q (protocol %s), acting as %q on %s\n",
-		p.ClientInfo.Name, version, s.Actor(), s.path)
+		p.ClientInfo.Name, version, s.Actor(), where)
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities": map[string]any{
@@ -388,7 +419,7 @@ func (s *Server) runTool(tool *Tool, args json.RawMessage) (text string, err err
 	if len(bytes.TrimSpace(args)) == 0 || string(bytes.TrimSpace(args)) == "null" {
 		args = json.RawMessage("{}")
 	}
-	call, err := s.newCall(args)
+	call, err := s.newCall(args, !tool.ReadOnly)
 	if err != nil {
 		return "", err
 	}
@@ -403,9 +434,13 @@ func (s *Server) runTool(tool *Tool, args json.RawMessage) (text string, err err
 	}
 	if !tool.ReadOnly {
 		// A move may enter a stage with a loop; never fail the tool for it.
-		if _, err := loops.Dispatch(s.path, call.Now); err != nil {
+		if _, err := loops.Dispatch(call.Path, call.Now); err != nil {
 			fmt.Fprintln(os.Stderr, "gotodo mcp: loops:", err)
 		}
+	}
+	if call.Ref.Created {
+		text = fmt.Sprintf("initialised project board %s (agents always use a project board inside a git repo)\n%s",
+			call.Path, text)
 	}
 	return text, nil
 }

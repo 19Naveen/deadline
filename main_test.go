@@ -159,7 +159,9 @@ func TestHeadlessDocumentReferences(t *testing.T) {
 	}
 }
 
-func TestBoardReportsTypeAndColumnsWithoutStoragePath(t *testing.T) {
+// board prints the path so agents can tell a project board from the
+// personal one.
+func TestBoardReportsTypeColumnsAndPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "board.json")
 	out := captureStdout(t, func() {
 		if err := run([]string{"-file", path, "board"}); err != nil {
@@ -169,8 +171,8 @@ func TestBoardReportsTypeAndColumnsWithoutStoragePath(t *testing.T) {
 	if !strings.Contains(out, "board: personal") || !strings.Contains(out, "columns: todo, doing, blocked, done") {
 		t.Errorf("personal board output = %q", out)
 	}
-	if strings.Contains(out, path) || strings.Contains(out, ".json") {
-		t.Errorf("board output leaks storage path and invites direct file access: %q", out)
+	if !strings.Contains(out, "path: "+path+" (file)") {
+		t.Errorf("board output = %q, want the resolved path", out)
 	}
 
 	b, err := task.Load(path)

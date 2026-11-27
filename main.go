@@ -2,7 +2,8 @@
 //
 // Without a subcommand it opens the interactive board: the nearest
 // .deadline/board.json walking up from the working directory (one board per
-// project), or the global personal board outside any initialised project.
+// project; a linked git worktree uses its main checkout's), or the global
+// personal board outside any initialised project. See board_resolve.go.
 // With a subcommand it runs headless (no TUI) so scripts and coding agents
 // can log work:
 //
@@ -36,6 +37,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,20 +115,33 @@ func run(argv []string) error {
 	if len(args) > 0 && args[0] == "init" {
 		return runInit(args[1:])
 	}
+	// The MCP server resolves the board per tool call, not once here.
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCP(*file, args[1:])
+	}
 
 	path := *file
+	var choice boardChoice
 	if path == "" {
+		// Agents changing a git repository always get its project board,
+		// created on first use; read-only commands and humans never create one.
+		agent := task.AgentFromEnv() != ""
+		autoInit := agent && len(args) > 0 && mutatingCommands[args[0]]
 		var err error
-		path, err = resolveBoardPath()
+		choice, err = resolveBoard(autoInit, os.Stderr)
 		if err != nil {
 			return err
 		}
+		path = choice.Path
 	}
 
 	if len(args) == 0 {
 		return runTUI(path)
 	}
 	err := runCommand(path, args)
+	if note := choice.note(); note != "" && (args[0] == "board" || args[0] == "add") {
+		fmt.Fprintln(os.Stderr, note)
+	}
 	if err == nil && mutatingCommands[args[0]] {
 		dispatchLoops(path)
 	}
@@ -195,8 +210,9 @@ func runCommand(path string, args []string) error {
 	}
 }
 
-// runBoard reports the resolved board type and status pipeline. It does not
-// print the JSON path: agents should use the CLI, not the storage file.
+// runBoard reports the resolved board type, status pipeline and path, so an
+// agent can tell a project board from the personal one. The path is for
+// orientation only: agents use the CLI, never the storage file.
 func runBoard(path string, args []string) error {
 	fs := flag.NewFlagSet("board", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
@@ -220,55 +236,13 @@ func runBoard(path string, args []string) error {
 	if b.DoneStatus() == task.StatusShipped {
 		kind = "development"
 	}
-	fmt.Printf("board: %s\ncolumns: %s\n", kind, strings.Join(names, ", "))
+	fmt.Printf("board: %s\ncolumns: %s\npath: %s (%s)\n", kind, strings.Join(names, ", "), path, boardScope(path))
 	return nil
 }
 
-// resolveBoardPath returns GOTODO_BOARD when a stage loop set it (its agent
-// may run in a worktree that has no .deadline of its own), else the nearest
-// project board walking up from the working directory, else the global
-// personal board. -file overrides all of these.
-func resolveBoardPath() (string, error) {
-	if env := strings.TrimSpace(os.Getenv(loops.BoardEnv)); env != "" {
-		if st, err := os.Stat(env); err == nil && !st.IsDir() {
-			return env, nil
-		}
-	}
-	if board, err := findProjectBoard(); err != nil {
-		return "", err
-	} else if board != "" {
-		return board, nil
-	}
-	return task.DefaultPath()
-}
-
-// findProjectBoard returns the nearest ancestor's .deadline/board.json, or
-// "". A .deadline directory without a board file does not count.
-func findProjectBoard() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("locate working directory: %w", err)
-	}
-	for {
-		candidate := filepath.Join(dir, projectDirName, projectBoardFile)
-		if st, err := os.Stat(candidate); err == nil {
-			if st.IsDir() {
-				return "", fmt.Errorf("%s is a directory, want a board file", candidate)
-			}
-			return candidate, nil
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("stat %s: %w", candidate, err)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", nil
-		}
-		dir = parent
-	}
-}
-
 // runInit creates ./.deadline/board.json with the dev columns and gitignores
-// it. Inside an existing project it reuses that board instead of nesting.
+// it. Inside an existing project it reuses that board instead of nesting,
+// and inside a linked git worktree it initialises the main checkout.
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
@@ -290,7 +264,16 @@ func runInit(args []string) error {
 		fmt.Printf("already initialised: %s\n", board)
 		return nil
 	}
-	path := filepath.Join(cwd, projectDirName, projectBoardFile)
+	root := initRoot(cwd)
+	if root != cwd {
+		if board, err := findBoardIn(root, root); err != nil {
+			return err
+		} else if board != "" {
+			fmt.Printf("already initialised: %s (main checkout of this worktree)\n", board)
+			return nil
+		}
+	}
+	path := filepath.Join(root, projectDirName, projectBoardFile)
 	board, err := loadBoard(path)
 	if err != nil {
 		return err
@@ -304,17 +287,20 @@ func runInit(args []string) error {
 		return err
 	}
 	fmt.Printf("initialised %s [dev]\n", path)
-	ensureGitignored(cwd)
+	if root != cwd {
+		fmt.Println("(in the main checkout: linked worktrees share its board)")
+	}
+	ensureGitignored(root, os.Stdout)
 	return nil
 }
 
 // ensureGitignored appends .deadline/ to the project's .gitignore, creating
-// it if needed.
-func ensureGitignored(dir string) {
+// it if needed. Progress lines go to w.
+func ensureGitignored(dir string, w io.Writer) {
 	ignore := filepath.Join(dir, ".gitignore")
 	data, err := os.ReadFile(ignore)
 	if err != nil && !os.IsNotExist(err) {
-		fmt.Println("hint: add .deadline/ to .gitignore to keep the board local")
+		fmt.Fprintln(w, "hint: add .deadline/ to .gitignore to keep the board local")
 		return
 	}
 	for _, line := range strings.Split(string(data), "\n") {
@@ -325,7 +311,7 @@ func ensureGitignored(dir string) {
 	}
 	f, err := os.OpenFile(ignore, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		fmt.Println("hint: add .deadline/ to .gitignore to keep the board local")
+		fmt.Fprintln(w, "hint: add .deadline/ to .gitignore to keep the board local")
 		return
 	}
 	defer f.Close()
@@ -333,7 +319,7 @@ func ensureGitignored(dir string) {
 		fmt.Fprintln(f)
 	}
 	fmt.Fprintln(f, projectDirName+"/")
-	fmt.Println("added .deadline/ to .gitignore")
+	fmt.Fprintln(w, "added .deadline/ to .gitignore")
 }
 
 // runTUI sweeps the archive, runs the interactive board, and saves on exit.
