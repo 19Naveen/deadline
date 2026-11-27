@@ -773,3 +773,28 @@ func TestStagesFitWithoutClipping(t *testing.T) {
 		}
 	}
 }
+
+// The welcome screen says what gotodo is: the wordmark and the card flow
+// on a standard terminal, and the essentials still fit on a short one.
+func TestWelcomeExplainsGotodo(t *testing.T) {
+	f := newFixture(t, all3(), map[string][]string{}, true)
+	for _, sz := range [][2]int{{80, 18}, {80, 24}, {120, 40}} {
+		next, _ := New(f.d, Options{}).Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+		v := next.(Model).View()
+		if got := lipgloss.Height(v); got > sz[1] {
+			t.Errorf("%dx%d: welcome is %d rows", sz[0], sz[1], got)
+		}
+		for _, want := range []string{"kanban board in your terminal", "TODO", "SHIPPED", "This setup will"} {
+			if !strings.Contains(v, want) && !strings.Contains(strings.ToUpper(v), strings.ToUpper(want)) {
+				t.Errorf("%dx%d: welcome lacks %q:\n%s", sz[0], sz[1], want, v)
+			}
+		}
+		hasLogo := strings.Contains(v, logo[0])
+		if sz[1] >= 24 && !hasLogo {
+			t.Errorf("%dx%d: welcome should show the gotodo wordmark:\n%s", sz[0], sz[1], v)
+		}
+		if sz[1] >= 24 && !strings.Contains(v, "builds it") {
+			t.Errorf("%dx%d: welcome should show who moves the card:\n%s", sz[0], sz[1], v)
+		}
+	}
+}

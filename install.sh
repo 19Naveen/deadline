@@ -86,7 +86,7 @@ while [ $# -gt 0 ]; do
       SETUP_LOOPS="-no-loops"; shift ;;
     -h|--help)
       cat <<'EOF'
-deadline (gotodo) installer — one script for all Linux distros.
+gotodo installer: a terminal kanban board for you and your coding agents.
 Usage:
   curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/19Naveen/deadline/main/install.sh | bash -s -- --dir ~/.local/bin
@@ -365,7 +365,7 @@ uninstall_gotodo() {
   done
   strip_deadline_block "$HOME/.claude/CLAUDE.md"
   strip_deadline_block "$HOME/.codex/AGENTS.md"
-  info "Removed deadline workflow from global instruction files (if present)."
+  info "Removed the gotodo workflow from global instruction files (if present)."
   info "Uninstall complete. Boards kept — delete ~/.config/gotodo and ./.deadline too for a full wipe."
 }
 
@@ -400,7 +400,7 @@ install_global_instructions() {
       printf '\n' >> "$dest"
     fi
     cat "$src" >> "$dest"
-    info "Wired deadline workflow into $dest"
+    info "Added the gotodo workflow to $dest"
   done
 }
 
@@ -457,7 +457,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   uninstall_gotodo
   exit 0
 fi
-info "Installing deadline (gotodo) from ${REPO}@${BRANCH}…"
+info "Installing gotodo from github.com/${REPO} (${BRANCH})…"
 # Whether the install dir was already usable before this script touched
 # PATH, so the closing hint is honest even though ensure_path_in_rc exports
 # it into this shell's environment below.

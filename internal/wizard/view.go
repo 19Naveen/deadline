@@ -42,9 +42,9 @@ func (m Model) View() string {
 	}
 	title, sub, body := m.content(inner, room)
 
-	lines := []string{title}
+	lines := strings.Split(title, "\n")
 	spacer := len(body) > 0
-	need := 1 + len(body)
+	need := len(lines) + len(body)
 	if sub != "" {
 		need++
 	}
@@ -80,7 +80,8 @@ func (m Model) View() string {
 	if gap < 1 {
 		gap = 1
 	}
-	out := header + "\n\n" + card + strings.Repeat("\n", gap) + footer
+	above := 1 + (gap-1)/3 // a little nearer the top than the middle
+	out := header + strings.Repeat("\n", above) + "\n" + card + strings.Repeat("\n", gap-above+1) + footer
 	if w > cw { // centre the whole layout
 		left := strings.Repeat(" ", (w-cw)/2)
 		all := strings.Split(out, "\n")
@@ -200,7 +201,7 @@ func (m Model) hints() []string {
 func (m Model) content(w, room int) (title, sub string, body []string) {
 	switch m.scr {
 	case scrWelcome:
-		return m.welcomeView()
+		return m.welcomeView(w, room)
 	case scrMCP:
 		return m.mcpView(w)
 	case scrLoops:
@@ -222,21 +223,102 @@ func (m Model) content(w, room int) (title, sub string, body []string) {
 	return "", "", nil
 }
 
-func (m Model) welcomeView() (string, string, []string) {
-	b := []string{section("Agents on this machine")}
+// logo is the gotodo wordmark in box-drawing letters.
+var logo = []string{
+	"┌─┐┌─┐┌┬┐┌─┐┌┬┐┌─┐",
+	"│ ┬│ │ │ │ │ │││ │",
+	"└─┘└─┘ ┴ └─┘─┴┘└─┘",
+}
+
+// welcomeView explains what gotodo is before asking anything, then what
+// setup will do. It sheds the logo and the boxed diagram on short
+// terminals so the essentials always fit in room rows.
+func (m Model) welcomeView(w, room int) (string, string, []string) {
+	sub := "A kanban board in your terminal that you and your coding agents share."
+
+	// How a card travels: each column in its board colour, then who moves it.
+	cols := []struct {
+		name string
+		st   lipgloss.Style
+	}{{"TODO", textStyle}, {"IN DEV", amberStyle}, {"REVIEW", accentStyle}, {"SHIPPED", okStyle}}
+	boxed := make([]string, 3)
+	for i, c := range cols {
+		bar := strings.Repeat("─", len(c.name)+2)
+		sep := "    "
+		mid := mutedStyle.Render(" ─▶ ")
+		if i == 0 {
+			sep, mid = "  ", "  "
+		}
+		boxed[0] += sep + c.st.Render("┌"+bar+"┐")
+		boxed[1] += mid + c.st.Render("│ "+c.name+" │")
+		boxed[2] += sep + c.st.Render("└"+bar+"┘")
+	}
+	captions := "   you add     an agent      an agent      you verify\n" +
+		"   a card      builds it     checks it     and ship"
+	flat := "  TODO ─▶ IN DEV ─▶ REVIEW ─▶ SHIPPED   you add · agents build and check · you ship"
+
+	var agents []string
 	for _, a := range loops.Agents {
-		if p, ok := m.paths[a]; ok {
-			b = append(b, "  "+okStyle.Render("✓")+" "+boldStyle.Render(pad(a, 10))+mutedStyle.Render(tilde(p, m.d.Home)))
+		if _, ok := m.paths[a]; ok {
+			agents = append(agents, okStyle.Render("✓ ")+boldStyle.Render(a))
 		} else {
-			b = append(b, "  "+errorStyle.Render("✗")+" "+mutedStyle.Render(pad(a, 10)+"not found"))
+			agents = append(agents, mutedStyle.Render("✗ "+a))
 		}
 	}
 	num := func(n, s string) string { return "  " + accentStyle.Render(n) + "  " + textStyle.Render(s) }
-	b = append(b, "", section("What this sets up"),
-		num("1", "The gotodo MCP server, so agents can read and move cards"),
-		num("2", "Stage loops (optional): an agent starts when a card changes column"),
-		num("3", "Skill packs (optional): pstack, mattpocock or your own"))
-	return titleStyle.Render("Welcome to gotodo setup"), "Nothing changes until you confirm on the Summary step.", b
+	setup := []string{
+		section("This setup will"),
+		num("1", "Connect gotodo to your agents, so they can read and move cards"),
+		num("2", "Optionally start an agent when a card enters a column (loops)"),
+		num("3", "Optionally install recommended skills for those agents"),
+	}
+	foot := mutedStyle.Render("Nothing changes until you confirm on the Summary step.")
+
+	build := func(withLogo, withBoxes, withFoot bool) (string, []string) {
+		title := titleStyle.Render("Welcome to gotodo")
+		if withLogo {
+			var l []string
+			for _, row := range logo {
+				l = append(l, accentStyle.Render(row))
+			}
+			title = strings.Join(l, "\n")
+		}
+		b := []string{section("How it works")}
+		if withBoxes {
+			b = append(b, boxed...)
+			for _, r := range strings.Split(captions, "\n") {
+				b = append(b, mutedStyle.Render(r))
+			}
+		} else {
+			b = append(b, textStyle.Render(trunc(flat, w)))
+		}
+		b = append(b, "", "  "+mutedStyle.Render("Agents found  ")+strings.Join(agents, "   "), "")
+		b = append(b, setup...)
+		if withFoot {
+			b = append(b, "", foot)
+		}
+		return title, b
+	}
+	// Rows a variant needs: title lines + subtitle + spacer + body.
+	fits := func(title string, b []string) bool {
+		return len(strings.Split(title, "\n"))+2+len(b) <= room
+	}
+	wide := w >= 56
+	// Richest first: the logo is worth more than the footnote, the boxed
+	// diagram more than the logo.
+	for _, v := range [][3]bool{
+		{true, true, true}, {true, true, false}, {false, true, true},
+		{false, true, false}, {true, false, false}, {false, false, false},
+	} {
+		if v[1] && !wide {
+			continue
+		}
+		if title, b := build(v[0], v[1], v[2]); fits(title, b) {
+			return title, sub, b
+		}
+	}
+	title, b := build(false, false, false)
+	return title, sub, b
 }
 
 var mcpWhere = map[string]string{
