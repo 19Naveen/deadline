@@ -60,7 +60,7 @@ func TestCardShowsPriorityAndClaimWithoutGrowing(t *testing.T) {
 	if strings.Count(card, "\n") != 0 {
 		t.Errorf("card grew past one row:\n%s", card)
 	}
-	for _, want := range []string{"!!!", "◆ claude", "Agent"} {
+	for _, want := range []string{"H [Agent card]", "◆ claude"} {
 		if !strings.Contains(card, want) {
 			t.Errorf("card is missing %q: %q", want, card)
 		}
@@ -139,9 +139,8 @@ func TestDetailShowsAgentFields(t *testing.T) {
 	out := stripANSI(press(m, "enter").View())
 	blocker := shortTaskID(b.Tasks[0].ID)
 	for _, want := range []string{
-		"Priority", "!!! high",
-		"Labels", "#api #ui",
-		"Blocked by", blocker, "[Blocker]", "todo",
+		"● high   #api #ui",
+		"Blocked by", "0 of 1 done", blocker, "[Blocker]", "todo",
 		"Claimed by", "◆ claude", "until 30/07/2026 15:30",
 		"PR", "https://example.test/pr/42",
 		"Last agent",
@@ -156,7 +155,7 @@ func TestDetailOmitsUnsetAgentFields(t *testing.T) {
 	m := fixedClock(NewBoardModel(seeded(t)))
 	m.SetSize(120, 40)
 	out := stripANSI(press(m, "enter").View())
-	for _, absent := range []string{"Priority", "Labels", "Blocked by", "Claimed by", "Last agent", "awaiting approval", "ready to verify", "o Open", "v Verify"} {
+	for _, absent := range []string{"●", "due ", "#", "Agent", "Blocked by", "Claimed by", "Last agent", "awaiting approval", "ready to verify", "o Open", "v Verify"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("detail shows unset %q:\n%s", absent, out)
 		}

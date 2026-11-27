@@ -7,25 +7,49 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"gotodo/internal/task"
 )
 
-// priorityMarker is a card's compact priority: !!! high in red, !! medium in
-// amber, ! low muted; empty when unset.
-func priorityMarker(p task.Priority) string {
+// priorityColour is a priority's colour: red high, amber medium, blue low.
+func priorityColour(p task.Priority) (lipgloss.AdaptiveColor, bool) {
 	switch p {
 	case task.PriorityHigh:
-		return lipgloss.NewStyle().Bold(true).Foreground(colBlocked).Render("!!!")
+		return colBlocked, true
 	case task.PriorityMedium:
-		return lipgloss.NewStyle().Bold(true).Foreground(colDoing).Render("!!")
+		return colDoing, true
 	case task.PriorityLow:
-		return MutedStyle.Render("!")
+		return colTodo, true
 	}
-	return ""
+	return lipgloss.AdaptiveColor{}, false
 }
 
-// priorityWord names a priority for the detail popup; empty when unset.
+// priorityDot is a card's priority: a single coloured ●, or under a
+// colourless profile (NO_COLOR, pipes) the letter H, M or L, so the level
+// still reads. Empty when unset.
+func priorityDot(p task.Priority) string {
+	c, ok := priorityColour(p)
+	if !ok {
+		return ""
+	}
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return strings.ToUpper(priorityWord(p)[:1])
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("●")
+}
+
+// priorityFact is the detail popup's "● high", dot and word in the
+// priority's colour; empty when unset.
+func priorityFact(p task.Priority) string {
+	c, ok := priorityColour(p)
+	if !ok {
+		return ""
+	}
+	return lipgloss.NewStyle().Bold(p == task.PriorityHigh).Foreground(c).Render("● " + priorityWord(p))
+}
+
+// priorityWord names a priority; empty when unset.
 func priorityWord(p task.Priority) string {
 	switch p {
 	case task.PriorityHigh:
@@ -89,45 +113,71 @@ func labelList(labels []string) string {
 	return strings.Join(tags, " ")
 }
 
-// propKeyWidth is the key column of the compact one-row detail props.
-const propKeyWidth = 12
-
-// propRow is one compact detail property: a muted bold key, then the value
-// clipped to the row.
-func propRow(key, value string, width int) string {
-	k := MutedStyle.Copy().Bold(true).Width(propKeyWidth).Render(key)
-	return k + lipgloss.NewStyle().MaxWidth(max(width-propKeyWidth, 1)).Render(value)
-}
-
-// maxBlockerRows caps the Blocked by list so the fixed props stay short.
-const maxBlockerRows = 3
-
-// agentProps are the one-row props agents fill in: priority, labels,
-// approval, blockers, claim, PR and last agent. Only set fields appear.
-func (m BoardModel) agentProps(t task.Task, width int) []string {
-	var rows []string
-	if w := priorityWord(t.Priority); w != "" {
-		rows = append(rows, propRow("Priority", priorityMarker(t.Priority)+" "+w, width))
+// detailFacts are the short facts under the detail popup's meta line:
+// priority, deadline with its countdown, labels and the approval state.
+// Only the set ones appear; none at all means no line.
+func (m BoardModel) detailFacts(t task.Task) []string {
+	var facts []string
+	if p := priorityFact(t.Priority); p != "" {
+		facts = append(facts, p)
+	}
+	if t.Deadline != nil {
+		now := m.now()
+		done := m.board.DoneStatus()
+		due := "due " + FormatDate(t.Deadline.In(now.Location()))
+		if c := countdownText(t, now, done); c != "" {
+			due += " · " + c
+		}
+		u := task.DeadlineUrgency(t, now, done)
+		facts = append(facts, lipgloss.NewStyle().Foreground(UrgencyColor(u)).Bold(u >= task.UrgencySoon).Render(due))
 	}
 	if l := labelList(t.Labels); l != "" {
-		rows = append(rows, propRow("Labels", truncate(l, width-propKeyWidth), width))
+		facts = append(facts, MutedStyle.Render(l))
 	}
 	switch {
 	case m.awaitingApproval(t):
-		rows = append(rows, propRow("Approval", statusTag("awaiting approval")+MutedStyle.Render("  v to ship"), width))
+		facts = append(facts, statusTag("awaiting approval"))
 	case m.inReview(t):
-		rows = append(rows, propRow("Review", statusTag("ready to verify")+MutedStyle.Render("  v to ship"), width))
+		facts = append(facts, statusTag("ready to verify"))
 	}
-	for i, id := range t.BlockedBy {
-		key := ""
-		if i == 0 {
-			key = "Blocked by"
+	return facts
+}
+
+// joinWrap lays parts out separated by sep, starting a new row before a
+// part that would push the row past width. A part wider than width is
+// clipped.
+func joinWrap(parts []string, sep string, width int) []string {
+	clip := lipgloss.NewStyle().MaxWidth(max(width, 1))
+	var rows []string
+	row := ""
+	for _, p := range parts {
+		p = clip.Render(p)
+		if row != "" && lipgloss.Width(row)+lipgloss.Width(sep)+lipgloss.Width(p) > width {
+			rows = append(rows, row)
+			row = ""
 		}
-		if i == maxBlockerRows {
-			rows = append(rows, propRow("", MutedStyle.Render(fmt.Sprintf("+%d more", len(t.BlockedBy)-i)), width))
-			break
+		if row != "" {
+			row += sep
 		}
-		rows = append(rows, propRow(key, m.blockerLine(id, width-propKeyWidth), width))
+		row += p
+	}
+	if row != "" {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// agentKeyWidth is the key column of the Agent section's rows.
+const agentKeyWidth = 12
+
+// agentRows are the Agent section: the loop run, the claim, the PR and the
+// last agent, one aligned "key  value" row each, values that are too long
+// wrapping under the value column. Empty when none is set.
+func (m BoardModel) agentRows(t task.Task, width int) []string {
+	type row struct{ key, value string }
+	var rows []row
+	if run, ok := m.watch.latest(t.ID); ok {
+		rows = append(rows, row{"Loop", loopSummary(run, m.now())})
 	}
 	if t.ClaimedBy != "" {
 		v := claimStyle.Render("◆ " + t.ClaimedBy)
@@ -138,16 +188,67 @@ func (m BoardModel) agentProps(t task.Task, width int) []string {
 			}
 			v += MutedStyle.Render("  " + until)
 		}
-		rows = append(rows, propRow("Claimed by", v, width))
-	}
-	if run, ok := m.watch.latest(t.ID); ok {
-		rows = append(rows, propRow("Loop", loopSummary(run, m.now()), width))
+		rows = append(rows, row{"Claimed by", v})
 	}
 	if t.PR != "" {
-		rows = append(rows, propRow("PR", truncate(t.PR, width-propKeyWidth), width))
+		rows = append(rows, row{"PR", t.PR})
 	}
 	if t.LastAgent != "" {
-		rows = append(rows, propRow("Last agent", truncate(t.LastAgent, width-propKeyWidth), width))
+		rows = append(rows, row{"Last agent", t.LastAgent})
+	}
+	valueW := max(width-agentKeyWidth, 1)
+	pad := strings.Repeat(" ", agentKeyWidth)
+	key := MutedStyle.Copy().Bold(true).Width(agentKeyWidth)
+	var out []string
+	for _, r := range rows {
+		lines := []string{lipgloss.NewStyle().MaxWidth(valueW).Render(r.value)}
+		if r.key == "PR" || r.key == "Last agent" {
+			lines = wrapPath(r.value, valueW)
+		}
+		for i, line := range lines {
+			if i == 0 {
+				out = append(out, key.Render(r.key)+line)
+			} else {
+				out = append(out, pad+line)
+			}
+		}
+	}
+	return out
+}
+
+// wrapPath breaks a path or URL into rows of at most width cells. It breaks
+// after a "/" (or at a space) when one fits on the row, and mid-word only
+// when a single segment is wider than the row.
+func wrapPath(s string, width int) []string {
+	width = max(width, 1)
+	var rows []string
+	rs := []rune(s)
+	for len(rs) > 0 {
+		w, fit, brk := 0, 0, -1
+		for fit < len(rs) {
+			cw := lipgloss.Width(string(rs[fit]))
+			if w+cw > width {
+				break
+			}
+			w += cw
+			fit++
+			if rs[fit-1] == '/' || rs[fit-1] == ' ' {
+				brk = fit
+			}
+		}
+		if fit == len(rs) {
+			rows = append(rows, string(rs))
+			break
+		}
+		cut := fit
+		if brk > 0 {
+			cut = brk
+		}
+		if cut == 0 {
+			cut = 1 // a rune wider than the row
+		}
+		rows = append(rows, strings.TrimRight(string(rs[:cut]), " "))
+		rs = []rune(strings.TrimLeft(string(rs[cut:]), " "))
 	}
 	return rows
 }
