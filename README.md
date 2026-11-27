@@ -350,6 +350,16 @@ Two boards, never mixed. Outside any project, `gotodo` opens your personal board
 gotodo -file ./work.json
 ```
 
+The board is picked in this order:
+
+1. `-file`, then `GOTODO_BOARD` (stage loops set it) when it names an existing file.
+2. The nearest `.deadline/board.json` walking up from the working directory.
+3. Inside a git repository, the main checkout's board. A linked worktree (`git worktree add ../x`) has no `.deadline/` of its own because it is gitignored, so gotodo asks git for the main checkout and uses its board.
+4. Inside a git repository with no board, when an agent (`GOTODO_AGENT` set, or the MCP server) makes a change (`add`, `edit`, `move`, `delete`, `next`, `claim`, `release`, `pr`, `wip`, `approval`, or an MCP write tool): gotodo initialises the project board at the main checkout root, as `gotodo init` would, and prints `initialised project board <path> ...` to stderr. Read-only commands never create a board.
+5. Otherwise the personal board. Inside a git repository without a board, `gotodo board` (and a human's `gotodo add`) print a note to stderr saying so.
+
+A git repository rooted at your home directory (a dotfiles repo) does not count as a project. `gotodo board` prints `path: <file> (project|personal)` so you can see which board you are on.
+
 Every change writes through a temporary file and a rename, so an interrupted write cannot leave you with half a board. A session where you changed nothing does not write at all. Concurrent writers merge by task under a brief file lock, so an agent logging while your board is open never drops your cards — and vice versa; two sessions editing the same card resolve last-writer-wins.
 
 Everything lives in the board file, with one exception: `gotodo notify` keeps
@@ -369,7 +379,9 @@ cd my-project
 gotodo init
 ```
 
-This writes `.deadline/board.json` and adds `.deadline/` to the project's `.gitignore`, creating the file when the project has none yet. Running `init` twice, or inside a subdirectory, reuses the existing board instead of nesting a new one. (A nested board is still possible by hand-creating `.deadline/board.json`; the nearest file always wins.)
+This writes `.deadline/board.json` and adds `.deadline/` to the project's `.gitignore`, creating the file when the project has none yet. Running `init` twice, or inside a subdirectory, reuses the existing board instead of nesting a new one. Run inside a linked git worktree, `init` initialises the main checkout, so every worktree of the repository shares one board. (A nested board is still possible by hand-creating `.deadline/board.json`; the nearest file always wins.)
+
+You rarely need `init` for agent work: an agent's first change inside a git repository without a board creates it (see [Storage](#storage)).
 
 Separate files are separate boards, which is the easiest way to keep work and personal apart — and project boards are how agents log development in parallel with your own list (see below).
 

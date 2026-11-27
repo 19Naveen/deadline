@@ -6,8 +6,13 @@ code change — feature, fix, refactor — log it before starting and move it
 along as you work:
 
 0. `export GOTODO_AGENT=<your-name>` (e.g. `claude`) so your moves and claims
-   are recorded under your name; run `gotodo init` in a project without a board.
-1. `gotodo board` first. Never assume columns; use the pipeline it prints:
+   are recorded under your name.
+1. `gotodo board` first, from inside the repo. Work in a code repository goes
+   on that repo's project board; the personal board is for the user's
+   personal tasks only. `board` prints the type, columns and
+   `path: <file> (project|personal)`; if it says `personal` while you are in
+   a repo, run `gotodo init` (gotodo also does this on your first change).
+   Never assume columns; use the pipeline it prints:
    `todo → doing → done` (personal) or
    `todo → indev → testing-review → shipped` (development). Either may use
    `blocked` when stuck.
@@ -20,6 +25,10 @@ along as you work:
    scope, acceptance criteria), `-priority`, `-label`, and `-worktree`,
    `-attachment` (user-provided files) and `-working-note` (plans/notes you
    write) whenever they apply. Keep them updated with `gotodo edit` as you work.
+   Linked files use project-relative paths inside the project (`docs/`,
+   `notes/`, or `.deadline/notes/` if they shouldn't be committed), never
+   `/tmp`, scratchpad, session or cache dirs: those disappear and the next
+   agent can't read them. Copy a scratch draft into the project first.
 4. Use `-parent <id-prefix>` when the work is a subtask of an existing card;
    inspect the family with `gotodo show <id-prefix>` or `list -parent`.
 5. `gotodo move <id-prefix> <active-column>` when starting, then through the

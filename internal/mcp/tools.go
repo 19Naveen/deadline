@@ -45,17 +45,25 @@ type Call struct {
 	Args json.RawMessage
 	// Path is the board file, for tools that write under the lock.
 	Path string
+	// Ref is how Path was resolved for this call.
+	Ref BoardRef
 }
 
-func (s *Server) newCall(args json.RawMessage) (*Call, error) {
-	b, err := task.Load(s.path)
+// newCall resolves the board for this call (write lets the resolver create
+// a project board) and loads it.
+func (s *Server) newCall(args json.RawMessage, write bool) (*Call, error) {
+	ref, err := s.resolve(write)
+	if err != nil {
+		return nil, err
+	}
+	b, err := task.Load(ref.Path)
 	if err != nil {
 		return nil, err
 	}
 	b.Actor = s.Actor()
 	now := s.now()
 	b.SweepArchive(now)
-	return &Call{Board: b, Now: now, Args: args, Path: s.path}, nil
+	return &Call{Board: b, Now: now, Args: args, Path: ref.Path, Ref: ref}, nil
 }
 
 // Decode strictly unmarshals the arguments into v: unknown fields and wrong
@@ -86,8 +94,10 @@ func DefaultTools() []Tool {
 			Name:  "board",
 			Title: "Board columns",
 			Description: "Report the board type (development or personal), its columns in pipeline order, " +
-				"WIP limits, whether shipping needs human approval, and who your moves are recorded as. " +
-				"Call this first: status arguments must be one of these columns.",
+				"WIP limits, whether shipping needs human approval, who your moves are recorded as, and the " +
+				"board path with its scope (project or personal). Call this first: status arguments must be " +
+				"one of these columns. Work in a git repository goes on its project board, which your first " +
+				"change creates if it is missing.",
 			InputSchema: objectSchema(nil),
 			ReadOnly:    true,
 			Idempotent:  true,
@@ -136,7 +146,7 @@ func DefaultTools() []Tool {
 				"parent":        stringProp("Optional parent task ID or unique prefix; the new task becomes its subtask."),
 				"worktree":      stringProp("Optional git worktree path or branch where the work lives."),
 				"attachments":   stringArrayProp("Optional reference file paths (specs, designs, logs). Paths are stored, files are not copied."),
-				"working_notes": stringArrayProp("Optional paths of agent working documents (plans, scratch notes) for this task."),
+				"working_notes": stringArrayProp("Optional project-relative paths of agent working documents (plans, notes) for this task. Keep them inside the project (e.g. docs/ or .deadline/notes/), never in /tmp, scratchpad or session dirs that disappear."),
 				"priority":      priorityProp("Optional priority."),
 				"labels":        stringArrayProp("Optional labels, e.g. [\"backend\", \"bug\"]."),
 				"blocked_by":    stringArrayProp("Optional IDs or prefixes of tasks that must ship first; the task auto-blocks until they do."),
@@ -260,6 +270,14 @@ func toolBoard(c *Call) (string, error) {
 		fmt.Fprintf(&out, "approval: only a human may move tasks into %s\n", b.DoneStatus())
 	}
 	fmt.Fprintf(&out, "acting as: %s\n", b.Actor)
+	if c.Ref.Scope != "" {
+		fmt.Fprintf(&out, "path: %s (%s)\n", c.Path, c.Ref.Scope)
+	} else {
+		fmt.Fprintf(&out, "path: %s\n", c.Path)
+	}
+	if c.Ref.Note != "" {
+		fmt.Fprintln(&out, c.Ref.Note)
+	}
 	return out.String(), nil
 }
 
