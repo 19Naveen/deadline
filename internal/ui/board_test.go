@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1834,17 +1835,20 @@ func TestDetailPopupClipsTheDescriptionBeforeOverflowing(t *testing.T) {
 func TestDetailPopupScrollsLongDescription(t *testing.T) {
 	b := &task.Board{}
 	b.SetPath("")
-	b.Add("[Task title]", strings.Repeat("readable prose needs enough words to wrap across the viewport ", 20), nil, ref)
+	b.Add("[Task title]", strings.Repeat("readable prose needs enough words to wrap across the viewport ", 60), nil, ref)
 
 	m := fixedClock(NewBoardModel(b))
 	m.SetSize(120, 24) // short enough that 30 rows must window
 	m = press(m, "enter")
 	out := stripANSI(m.View())
 
-	for _, want := range []string{"Description", "1–15 /", "j/k Scroll"} {
+	for _, want := range []string{"Description", "j/k Scroll"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("scrollable popup is missing %q:\n%s", want, out)
 		}
+	}
+	if !scrollCounter.MatchString(out) {
+		t.Fatalf("scrollable popup has no 1–N / M counter:\n%s", out)
 	}
 	m = press(m, "j", "j", "j")
 	out = stripANSI(m.View())
@@ -1853,7 +1857,7 @@ func TestDetailPopupScrollsLongDescription(t *testing.T) {
 	}
 
 	m = press(m, "G")
-	if out := stripANSI(m.View()); !strings.Contains(out, fmt.Sprintf("–%d / %d", len(m.detailBodyLines(b.Tasks[0], m.popupWidth()-2)), len(m.detailBodyLines(b.Tasks[0], m.popupWidth()-2)))) {
+	if out := stripANSI(m.View()); !strings.Contains(out, fmt.Sprintf("–%d / %d", len(m.detailBodyLines(b.Tasks[0], m.detailWidth()-2)), len(m.detailBodyLines(b.Tasks[0], m.detailWidth()-2)))) {
 		t.Errorf("G did not jump to the last window:\n%s", out)
 	}
 	m = press(m, "g")
@@ -1887,7 +1891,7 @@ func TestDetailShortBodyHasMinimumHeightLongBodyCaps(t *testing.T) {
 	short := &task.Board{}
 	short.Add("Short", "one line", nil, ref)
 	long := &task.Board{}
-	long.Add("Long", strings.Repeat("word ", 200), nil, ref)
+	long.Add("Long", strings.Repeat("word ", 900), nil, ref)
 
 	shortModel := fixedClock(NewBoardModel(short))
 	shortModel.SetSize(120, 40)
@@ -1906,8 +1910,8 @@ func TestDetailShortBodyHasMinimumHeightLongBodyCaps(t *testing.T) {
 	if got, long := lipgloss.Height(shortModel.renderDetail()), lipgloss.Height(longModel.renderDetail()); got >= long {
 		t.Errorf("short detail height = %d, long detail height = %d; want the short one compact", got, long)
 	}
-	if out := stripANSI(longModel.renderDetail()); !strings.Contains(out, "1–15 /") {
-		t.Errorf("detail did not open a 15-row viewport:\n%s", out)
+	if out := stripANSI(longModel.renderDetail()); !scrollCounter.MatchString(out) {
+		t.Errorf("long detail did not open a scrolling viewport:\n%s", out)
 	}
 }
 
@@ -1968,13 +1972,13 @@ func TestDetailPopupNormalizesHardWrappedTitle(t *testing.T) {
 func TestDetailPopupCapsBodyOnTallTerminal(t *testing.T) {
 	b := &task.Board{}
 	b.SetPath("")
-	b.Add("[Task title]", strings.Repeat("professional prose still needs a bounded reading measure and viewport ", 20), nil, ref)
+	b.Add("[Task title]", strings.Repeat("professional prose still needs a bounded reading measure and viewport ", 80), nil, ref)
 
 	m := fixedClock(NewBoardModel(b))
-	m.SetSize(120, 40)
+	m.SetSize(120, 90)
 	out := stripANSI(press(m, "enter").View())
 
-	if !strings.Contains(out, "1–15 /") {
+	if !strings.Contains(out, fmt.Sprintf("1–%d /", detailMaxBodyRows)) {
 		t.Errorf("tall popup shows more than the capped window:\n%s", out)
 	}
 	if !strings.Contains(out, "j/k Scroll") {
@@ -2030,3 +2034,6 @@ func TestSelectedFamilyIsMarkedAcrossColumns(t *testing.T) {
 		t.Error("selected card itself or an unrelated card is marked")
 	}
 }
+
+// scrollCounter matches the detail popup's "1–N / M" scroll position.
+var scrollCounter = regexp.MustCompile(`1–\d+ / \d+`)

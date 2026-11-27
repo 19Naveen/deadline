@@ -582,9 +582,24 @@ func (m BoardModel) detailBudget() int {
 	return m.height - 3
 }
 
-// detailMaxBodyRows caps the scrolling body even on a tall terminal.
-const detailMaxBodyRows = 15
+// The detail body shows at least detailMinBodyRows (so short and long cards
+// look alike) and grows with the terminal up to detailMaxBodyRows.
+const detailMaxBodyRows = 30
 const detailMinBodyRows = 10
+
+// detailMaxWidth caps the detail popup; it reads mostly prose, so it may be
+// wider than the form (popupMaxWidth) on a wide terminal.
+const detailMaxWidth = 100
+
+// detailWidth is the detail popup's width: the terminal minus a margin,
+// between the form's width and detailMaxWidth.
+func (m BoardModel) detailWidth() int {
+	w := m.width - 8
+	if m.width <= 0 {
+		w = 80 - 8
+	}
+	return max(min(w, detailMaxWidth), m.popupWidth())
+}
 
 // detailLayout splits the detail popup into the fixed head (title, meta,
 // facts) and the body (every section), which scrolls once it outgrows
@@ -598,9 +613,14 @@ func (m BoardModel) detailLayout(t task.Task, w int) detailLayout {
 	l := detailLayout{head: m.detailHead(t, w, true), body: m.detailBodyLines(t, w)}
 	// Budget the scrolling footer: with its counter it can wrap a row taller.
 	foot := rowsHeight(m.detailFoot(t, "999–999 / 999", w))
-	// On a very short terminal the facts line gives way before the frame.
+	// On a short terminal the spacer under the rule goes first, then the
+	// facts line, before the frame itself.
+	if rowsHeight(l.head)+foot+2 > m.detailBudget() {
+		l.head = l.head[:len(l.head)-1]
+	}
 	if rowsHeight(l.head)+foot > m.detailBudget() {
 		l.head = m.detailHead(t, w, false)
+		l.head = l.head[:len(l.head)-1]
 	}
 	avail := m.detailBudget() - rowsHeight(l.head) - foot
 	if l.window = min(max(len(l.body), detailMinBodyRows), detailMaxBodyRows, avail); l.window < 2 {
@@ -617,7 +637,7 @@ func (m BoardModel) renderDetail() string {
 	if !ok {
 		return ""
 	}
-	w := m.popupWidth()
+	w := m.detailWidth()
 	cw := max(w-2, 1) // ColumnStyle's padding comes out of Width
 	l := m.detailLayout(t, cw)
 
@@ -659,7 +679,7 @@ func (m BoardModel) detailHead(t task.Task, width int, facts bool) []string {
 	if facts {
 		head = append(head, joinWrap(m.detailFacts(t), "   ", width)...)
 	}
-	return append(head, MutedStyle.Render(strings.Repeat("─", width)))
+	return append(head, MutedStyle.Render(strings.Repeat("─", width)), "")
 }
 
 // detailFoot is the popup's hint footer, led by any error. A non-empty
@@ -683,10 +703,12 @@ func (m BoardModel) detailFoot(t task.Task, counter string, width int) []string 
 		hints = append(hints, keyHint("L", "Loop log"))
 	}
 	hints = append(hints, keyHint("s", "Subtask"), keyHint("e", "Edit"), keyHint("d", "Delete"), keyHint("esc", "Close"))
-	if counter != "" {
-		hints = append(hints, MutedStyle.Render(counter))
+	rule := MutedStyle.Render(strings.Repeat("─", width))
+	if counter != "" && width > len(counter)+6 {
+		// The scroll position sits in the rule: "──── 1–15 / 24 ─".
+		rule = MutedStyle.Render(strings.Repeat("─", width-lipgloss.Width(counter)-4) + " " + counter + " ──")
 	}
-	return popupFoot(width, hints...)
+	return []string{rule, hintBar(width, hints...)}
 }
 
 // popupFoot is the rule and hint bar closing every centred panel.
@@ -1675,7 +1697,7 @@ func (m BoardModel) clampDetailScroll(offset int) int {
 	if !ok {
 		return 0
 	}
-	l := m.detailLayout(t, max(m.popupWidth()-2, 1))
+	l := m.detailLayout(t, max(m.detailWidth()-2, 1))
 	return min(max(offset, 0), max(len(l.body)-l.window, 0))
 }
 
