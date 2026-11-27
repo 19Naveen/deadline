@@ -127,6 +127,7 @@ type Model struct {
 
 	steps     []step
 	spin      spinner.Model
+	frame     int // welcome animation step
 	finished  bool
 	appliedAt time.Time
 	quit      bool
@@ -193,7 +194,18 @@ func New(d Deps, o Options) Model {
 }
 
 // Init starts nothing; the wizard waits for keys.
-func (m Model) Init() tea.Cmd { return nil }
+// Init starts the welcome animation.
+func (m Model) Init() tea.Cmd { return welcomeTick() }
+
+// welcomeTickMsg advances the welcome board's demo card.
+type welcomeTickMsg struct{}
+
+// welcomeStep is how long the demo card stays in each column.
+const welcomeStep = 1400 * time.Millisecond
+
+func welcomeTick() tea.Cmd {
+	return tea.Tick(welcomeStep, func(time.Time) tea.Msg { return welcomeTickMsg{} })
+}
 
 // available is what an agent can load now (user and project skills) plus
 // what the chosen packs bring.
@@ -243,6 +255,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
+	case welcomeTickMsg:
+		if m.scr != scrWelcome || m.quit {
+			return m, nil // stop ticking once the user moves on
+		}
+		m.frame++
+		return m, welcomeTick()
 	case stepDoneMsg:
 		return m.stepDone(msg)
 	case tea.KeyMsg:

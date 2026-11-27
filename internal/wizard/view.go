@@ -230,28 +230,45 @@ var logo = []string{
 	"└─┘└─┘ ┴ └─┘─┴┘└─┘",
 }
 
-// welcomeView explains what gotodo is before asking anything, then what
-// setup will do. The logo and footnote drop first on short terminals.
-func (m Model) welcomeView(w, room int) (string, string, []string) {
-	sub := "A kanban board in your terminal that you and your coding agents share."
+// welcomeDemo is one beat of the welcome board: the column the demo card
+// sits in, who is working on it, and the caption under the board.
+var welcomeDemo = []struct {
+	col     int
+	who     string
+	caption string
+}{
+	{0, "you", "You add a card."},
+	{1, "claude", "An agent picks it up and builds it."},
+	{2, "codex", "Another agent reviews it."},
+	{3, "you", "You verify it and ship."},
+}
 
-	// The card flow, minimal: each column in its board colour, and who
-	// moves the card there underneath.
-	steps := []struct {
-		col, who string
-		st       lipgloss.Style
-	}{{"todo", "you", textStyle}, {"in dev", "agent", amberStyle}, {"review", "agent", accentStyle}, {"shipped", "you", okStyle}}
-	flow, whom := "  ", "  "
-	for i, s := range steps {
-		cell := len(s.col) + 5 // " ─▶  " between columns
-		if i == len(steps)-1 {
-			cell = len(s.col)
+// welcomeView shows what gotodo is instead of describing it: the wordmark
+// and a small board whose one card moves from you, through two agents,
+// back to you. It animates on welcomeTickMsg; frame picks the beat.
+func (m Model) welcomeView(w, room int) (string, string, []string) {
+	beat := welcomeDemo[m.frame%len(welcomeDemo)]
+	cols := []struct {
+		name string
+		st   lipgloss.Style
+	}{{"TODO", textStyle}, {"IN DEV", amberStyle}, {"REVIEW", accentStyle}, {"SHIPPED", okStyle}}
+	colW := min(14, max((w-4)/len(cols), 10))
+
+	head, rule, card, mark := "  ", "  ", "  ", "  "
+	for i, c := range cols {
+		head += c.st.Render(pad(c.name, colW))
+		rule += mutedStyle.Render(pad(strings.Repeat("─", colW-3), colW))
+		if i == beat.col {
+			card += c.st.Render("▌") + textStyle.Render(pad(" Fix login", colW-1))
+			who := "◆ " + beat.who
+			if beat.who != "you" {
+				who = "⟳ " + beat.who
+			}
+			mark += mutedStyle.Render(pad("  "+who, colW))
+		} else {
+			card += strings.Repeat(" ", colW)
+			mark += strings.Repeat(" ", colW)
 		}
-		flow += s.st.Render(s.col)
-		if i < len(steps)-1 {
-			flow += mutedStyle.Render("  →  ")
-		}
-		whom += mutedStyle.Render(pad(s.who, cell))
 	}
 
 	var agents []string
@@ -262,37 +279,24 @@ func (m Model) welcomeView(w, room int) (string, string, []string) {
 			agents = append(agents, mutedStyle.Render("· "+a))
 		}
 	}
-	num := func(n, s string) string { return "  " + accentStyle.Render(n) + "  " + textStyle.Render(s) }
 
-	build := func(withLogo, withFoot bool) (string, []string) {
-		title := titleStyle.Render("Welcome to gotodo")
-		if withLogo {
-			var l []string
-			for _, row := range logo {
-				l = append(l, accentStyle.Render(row))
+	title := titleStyle.Render("gotodo")
+	tagline := mutedStyle.Render("a kanban board you share with your coding agents")
+	if len(logo)+8 <= room {
+		var l []string
+		for i, row := range logo {
+			line := accentStyle.Render(row)
+			if i == 1 {
+				line += "   " + tagline
 			}
-			title = strings.Join(l, "\n")
+			l = append(l, line)
 		}
-		b := []string{flow, whom, "",
-			"  " + mutedStyle.Render("agents  ") + strings.Join(agents, "  "), "",
-			section("This setup will"),
-			num("1", "Connect gotodo to your agents, so they can read and move cards"),
-			num("2", "Optionally start an agent when a card enters a column (loops)"),
-			num("3", "Optionally install recommended skills for those agents"),
-		}
-		if withFoot {
-			b = append(b, "", mutedStyle.Render("Nothing changes until you confirm on the Summary step."))
-		}
-		return title, b
+		title, tagline = strings.Join(l, "\n"), ""
 	}
-	for _, v := range [][2]bool{{true, true}, {true, false}, {false, true}, {false, false}} {
-		title, b := build(v[0], v[1])
-		if len(strings.Split(title, "\n"))+2+len(b) <= room {
-			return title, sub, b
-		}
-	}
-	title, b := build(false, false)
-	return title, sub, b
+	b := []string{head, rule, card, mark, "",
+		"  " + textStyle.Render(beat.caption), "",
+		"  " + strings.Join(agents, "   ")}
+	return title, tagline, b
 }
 
 var mcpWhere = map[string]string{

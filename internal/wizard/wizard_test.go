@@ -774,27 +774,47 @@ func TestStagesFitWithoutClipping(t *testing.T) {
 	}
 }
 
-// The welcome screen says what gotodo is: the wordmark and the card flow
-// on a standard terminal, and the essentials still fit on a short one.
+// The welcome screen shows gotodo working: a small board whose demo card
+// moves column by column on each tick, with no setup checklist.
 func TestWelcomeExplainsGotodo(t *testing.T) {
 	f := newFixture(t, all3(), map[string][]string{}, true)
 	for _, sz := range [][2]int{{80, 18}, {80, 24}, {120, 40}} {
 		next, _ := New(f.d, Options{}).Update(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
-		v := next.(Model).View()
+		m := next.(Model)
+		v := m.View()
 		if got := lipgloss.Height(v); got > sz[1] {
 			t.Errorf("%dx%d: welcome is %d rows", sz[0], sz[1], got)
 		}
-		for _, want := range []string{"kanban board in your terminal", "todo  →  in dev  →  review  →  shipped", "This setup will"} {
-			if !strings.Contains(v, want) && !strings.Contains(strings.ToUpper(v), strings.ToUpper(want)) {
+		for _, want := range []string{"coding agents", "TODO", "SHIPPED", "Fix login", "You add a card."} {
+			if !strings.Contains(v, want) {
 				t.Errorf("%dx%d: welcome lacks %q:\n%s", sz[0], sz[1], want, v)
 			}
 		}
-		hasLogo := strings.Contains(v, logo[0])
-		if sz[1] >= 24 && !hasLogo {
-			t.Errorf("%dx%d: welcome should show the gotodo wordmark:\n%s", sz[0], sz[1], v)
+		if strings.Contains(strings.ToUpper(v), "THIS SETUP WILL") || strings.Contains(v, "Nothing changes") {
+			t.Errorf("%dx%d: welcome should not list setup steps:\n%s", sz[0], sz[1], v)
 		}
-		if !strings.Contains(v, "agent") || strings.Contains(v, "┌──") {
-			t.Errorf("%dx%d: welcome should show who moves the card, without boxes:\n%s", sz[0], sz[1], v)
+		if sz[1] >= 24 && !strings.Contains(v, logo[0]) {
+			t.Errorf("%dx%d: welcome should show the wordmark:\n%s", sz[0], sz[1], v)
 		}
+	}
+	// Each tick moves the card on; leaving the screen stops the ticks.
+	m := New(f.d, Options{})
+	if m.Init() == nil {
+		t.Fatal("welcome should start its animation")
+	}
+	captions := []string{"You add a card.", "builds it", "reviews it", "ship"}
+	for i, want := range captions {
+		if v := m.View(); !strings.Contains(v, want) {
+			t.Errorf("beat %d lacks %q:\n%s", i, want, v)
+		}
+		next, cmd := m.Update(welcomeTickMsg{})
+		m = next.(Model)
+		if cmd == nil {
+			t.Fatal("ticks should continue on the welcome screen")
+		}
+	}
+	m = press(t, m, "enter")
+	if _, cmd := m.Update(welcomeTickMsg{}); cmd != nil {
+		t.Error("ticks should stop after leaving the welcome screen")
 	}
 }
