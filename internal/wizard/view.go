@@ -499,6 +499,7 @@ func (m Model) stagesView(w int) (string, string, []string) {
 		ln.raw(tag, colW[5])
 		b = append(b, ln.line(w))
 	}
+	b = append(b, "") // breathing room between the table and its notes
 	switch {
 	case m.edit != nil:
 		b = append(b, m.edit.view(w))
@@ -579,7 +580,7 @@ func (m Model) summaryView(w int) (string, string, []string) {
 		}
 		b = append(b, label("Loops")+textStyle.Render(verb+path),
 			label("")+mutedStyle.Render(fmt.Sprintf("max_parallel %d · max_runs_per_task %d",
-				loops.DefaultMaxParallel, loops.DefaultMaxRunsPerTask)))
+				loops.DefaultMaxParallel, loops.DefaultMaxRunsPerTask)), "")
 		for _, r := range m.rows {
 			if !r.On {
 				continue
@@ -593,11 +594,15 @@ func (m Model) summaryView(w int) (string, string, []string) {
 				pad(model, colW[3])+pad(r.Skill, colW[4]))+m.pill(r.Perm, permColor(r.Perm)))
 		}
 	}
+	var notes []string
 	if shared || m.sharedPresent() {
-		b = append(b, mutedStyle.Render("Update npx-installed packs later with: npx skills update -g"))
+		notes = append(notes, mutedStyle.Render("Update npx-installed packs later with: npx skills update -g"))
 	}
 	if review {
-		b = append(b, mutedStyle.Render("testing-review uses edits so the reviewer can run gotodo to move the card."))
+		notes = append(notes, mutedStyle.Render("testing-review uses edits so the reviewer can run gotodo to move the card."))
+	}
+	if len(notes) > 0 {
+		b = append(append(b, ""), notes...)
 	}
 	return titleStyle.Render("Review and apply"), "Nothing has changed yet. Enter applies everything below.", b
 }
