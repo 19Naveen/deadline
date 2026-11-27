@@ -228,3 +228,36 @@ func (m BoardModel) renderOpen() string {
 	rows = append(rows, popupFoot(cw, hints...)...)
 	return ColumnStyle.Copy().Width(w).Render(strings.Join(rows, "\n"))
 }
+
+// displayPath shortens a stored path for reading: a path inside the project
+// shows relative to it (docs/plan.md), a sibling of the project (a git
+// worktree) as ../name, and anything else only its last two parts
+// (…/scratchpad/design.md), since the rest is noise. Stored values and
+// what `o` opens are unchanged.
+func displayPath(path, root string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(resolveDocPath(path, root)) {
+		return path
+	}
+	abs := filepath.Clean(resolveDocPath(path, root))
+	if root != "" {
+		if rel, err := filepath.Rel(root, abs); err == nil {
+			if rel == "." {
+				return "."
+			}
+			if !strings.HasPrefix(rel, "..") {
+				return rel
+			}
+			// Beside the project, e.g. a worktree at ../app-x: one level up only.
+			up := ".." + string(filepath.Separator)
+			if strings.HasPrefix(rel, up) && !strings.HasPrefix(rel, up+"..") {
+				return rel
+			}
+		}
+	}
+	parts := strings.Split(strings.Trim(abs, string(filepath.Separator)), string(filepath.Separator))
+	if len(parts) <= 2 {
+		return abs
+	}
+	return "…/" + strings.Join(parts[len(parts)-2:], "/")
+}

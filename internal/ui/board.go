@@ -768,7 +768,7 @@ func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
 	paths := func(label string, ps ...string) {
 		rows := []string{detailLabel(label, "", w)}
 		for _, p := range ps {
-			for _, line := range wrapPath(p, w-2) {
+			for _, line := range wrapPath(displayPath(p, projectRoot(m.board.Path())), w-2) {
 				rows = append(rows, indent(line))
 			}
 		}
