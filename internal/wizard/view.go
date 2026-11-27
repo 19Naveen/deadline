@@ -317,7 +317,8 @@ func (m Model) packsView(w int) (string, string, []string) {
 			opt(itemRecommend, m.recommend, "Install recommended", strings.Join(what, " · ")),
 			opt(itemSkip, !m.recommend, "Skip", "use the skills you already have"))
 	} else {
-		b = append(b, "  "+okStyle.Render("✓")+" "+textStyle.Render("Recommended skills are installed for every agent."))
+		b = append(b, m.newRow(cur.kind == itemContinue).add(radioStyle(cur.kind != itemAdd && cur.kind != itemCustom)).space(1).
+			cell(boldStyle, "Continue", 22).add(mutedStyle, "use the skills you have").line(w))
 	}
 	for ci, c := range m.customs {
 		b = append(b, m.newRow(cur.kind == itemCustom && cur.custom == ci).add(accentStyle, "◆ ").
@@ -360,7 +361,11 @@ func (m Model) packsView(w int) (string, string, []string) {
 		}
 		b = append(b, r.line(w))
 	}
-	return titleStyle.Render("Skills"), "Install the recommended skills, skip, or add your own.", b
+	sub := "Install the recommended skills, skip, or add your own."
+	if len(missing) == 0 {
+		sub = "Every agent has the recommended skills. Continue, or add your own."
+	}
+	return titleStyle.Render("Skills"), sub, b
 }
 
 func (m Model) existingView(w int) (string, string, []string) {

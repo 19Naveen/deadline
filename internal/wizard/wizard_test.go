@@ -357,15 +357,20 @@ func TestPacksOfferedOnlyWhenMissing(t *testing.T) {
 		t.Errorf("expected 4 installed packs, got %d:\n%s", n, v)
 	}
 
-	// Nothing missing: no choice to make, just the add row.
+	// Nothing missing: Recommend/Skip are hidden and Continue is focused,
+	// so enter moves on instead of opening the add box (a past trap).
 	f = newFixture(t, all3(), map[string][]string{
 		"claude": {"poteto-mode", "grilling"}, "codex": {"poteto-mode", "grilling"}, "opencode": {"poteto-mode", "grilling"},
 	}, true)
 	m = press(t, New(f.d, Options{}), "enter", "enter", "down", "enter")
 	v = m.View()
-	if m.recommend || len(m.packItems()) != 1 || !m.onAddRow() || strings.Contains(v, "Install recommended") ||
-		!strings.Contains(v, "Recommended skills are installed for every agent.") {
-		t.Errorf("nothing missing should hide Recommend/Skip:\n%s", v)
+	if m.recommend || len(m.packItems()) != 2 || m.onAddRow() || strings.Contains(v, "Install recommended") ||
+		!strings.Contains(v, "Continue") || !strings.Contains(v, "Every agent has the recommended skills") {
+		t.Errorf("nothing missing should offer Continue, not Recommend/Skip:\n%s", v)
+	}
+	m = press(t, m, "enter")
+	if m.src != nil || m.scr != scrStages {
+		t.Errorf("enter on Continue should go to Stages, got screen %v, add box open %v", m.scr, m.src != nil)
 	}
 }
 

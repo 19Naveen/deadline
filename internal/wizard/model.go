@@ -76,6 +76,7 @@ type packItem struct {
 const (
 	itemRecommend = iota
 	itemSkip
+	itemContinue // shown instead of Recommend/Skip when nothing is missing
 	itemCustom
 	itemAdd
 )
@@ -388,6 +389,10 @@ func (m Model) packItems() []packItem {
 	var items []packItem
 	if len(m.offered()) > 0 {
 		items = append(items, packItem{kind: itemRecommend}, packItem{kind: itemSkip})
+	} else {
+		// Something enter can always move on with; otherwise the add row
+		// would be the only stop and enter would trap the user in it.
+		items = append(items, packItem{kind: itemContinue})
 	}
 	for ci := range m.customs {
 		items = append(items, packItem{kind: itemCustom, custom: ci})
