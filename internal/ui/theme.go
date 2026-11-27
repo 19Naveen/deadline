@@ -228,17 +228,25 @@ func RenderDeadline(t task.Task, now time.Time, done task.Status) string {
 // its urgency colour, bold once it is pressing. Empty without a deadline or
 // once the task is done.
 func Countdown(t task.Task, now time.Time, done task.Status) string {
-	u := task.DeadlineUrgency(t, now, done)
-	days, ok := task.DaysUntilDeadline(t, now)
-	if !ok || u == task.UrgencyDone {
+	text := countdownText(t, now, done)
+	if text == "" {
 		return ""
 	}
-	text := fmt.Sprintf("%dd", days)
+	u := task.DeadlineUrgency(t, now, done)
+	return lipgloss.NewStyle().Foreground(UrgencyColor(u)).Bold(u >= task.UrgencySoon).Render(text)
+}
+
+// countdownText is Countdown without the styling.
+func countdownText(t task.Task, now time.Time, done task.Status) string {
+	days, ok := task.DaysUntilDeadline(t, now)
+	if !ok || task.DeadlineUrgency(t, now, done) == task.UrgencyDone {
+		return ""
+	}
 	switch {
 	case days < 0:
-		text = fmt.Sprintf("late %dd", -days)
+		return fmt.Sprintf("late %dd", -days)
 	case days == 0:
-		text = "today"
+		return "today"
 	}
-	return lipgloss.NewStyle().Foreground(UrgencyColor(u)).Bold(u >= task.UrgencySoon).Render(text)
+	return fmt.Sprintf("%dd", days)
 }

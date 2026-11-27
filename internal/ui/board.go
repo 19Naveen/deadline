@@ -475,13 +475,13 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 
 	// The countdown sits right-aligned on the title row: the one thing on a
 	// card allowed to be loud.
-	// The priority marker leads the title; an agent's claim sits beside the
+	// The priority dot leads the title; an agent's claim sits beside the
 	// countdown, shortened before the title gives up its last 8 cells.
 	prefix := ""
 	if grabbed {
 		prefix = "⇄ "
 	}
-	if mark := priorityMarker(t.Priority); mark != "" {
+	if mark := priorityDot(t.Priority); mark != "" {
 		prefix += mark + " "
 	}
 	right := Countdown(t, m.now(), m.board.DoneStatus())
@@ -586,25 +586,23 @@ func (m BoardModel) detailBudget() int {
 const detailMaxBodyRows = 15
 const detailMinBodyRows = 10
 
-// detailLayout splits the detail popup into fixed parts (head, props) and the
-// body (subtasks, description), which scrolls once it outgrows window rows.
+// detailLayout splits the detail popup into the fixed head (title, meta,
+// facts) and the body (every section), which scrolls once it outgrows
+// window rows.
 type detailLayout struct {
-	head, props, body []string
-	window            int
+	head, body []string
+	window     int
 }
 
 func (m BoardModel) detailLayout(t task.Task, w int) detailLayout {
-	l := detailLayout{head: m.detailHead(t, w), props: m.detailProps(t, w), body: m.detailBodyLines(t, w)}
+	l := detailLayout{head: m.detailHead(t, w, true), body: m.detailBodyLines(t, w)}
 	// Budget the scrolling footer: with its counter it can wrap a row taller.
 	foot := rowsHeight(m.detailFoot(t, "999–999 / 999", w))
-	// On a very short terminal the fixed props give way before the frame.
-	if room := max(m.detailBudget()-rowsHeight(l.head)-foot, 0); len(l.props) > room {
-		l.props = l.props[:room]
+	// On a very short terminal the facts line gives way before the frame.
+	if rowsHeight(l.head)+foot > m.detailBudget() {
+		l.head = m.detailHead(t, w, false)
 	}
-	avail := m.detailBudget() - rowsHeight(l.head) - rowsHeight(l.props) - foot
-	if len(l.props) > 0 {
-		avail-- // blank row between props and body
-	}
+	avail := m.detailBudget() - rowsHeight(l.head) - foot
 	if l.window = min(max(len(l.body), detailMinBodyRows), detailMaxBodyRows, avail); l.window < 2 {
 		l.window = 0 // not even a label and one row: drop the body
 	}
@@ -623,15 +621,12 @@ func (m BoardModel) renderDetail() string {
 	cw := max(w-2, 1) // ColumnStyle's padding comes out of Width
 	l := m.detailLayout(t, cw)
 
-	rows := append(append([]string{}, l.head...), l.props...)
+	rows := append([]string{}, l.head...)
 	counter := ""
 	if l.window > 0 {
 		start := min(max(m.detailScroll, 0), max(len(l.body)-l.window, 0))
 		if l.window < len(l.body) {
 			counter = fmt.Sprintf("%d–%d / %d", start+1, start+l.window, len(l.body))
-		}
-		if len(l.props) > 0 {
-			rows = append(rows, "")
 		}
 		end := min(start+l.window, len(l.body))
 		rows = append(rows, l.body[start:end]...)
@@ -652,57 +647,19 @@ func detailLabel(label, hint string, width int) string {
 // indent puts a value under its label, aligned with the form's input text.
 func indent(s string) string { return "  " + s }
 
-// detailHead is the title, wrapped on words, and the status/meta line.
-func (m BoardModel) detailHead(t task.Task, width int) []string {
+// detailHead is the fixed top of the popup: the title, wrapped on words, the
+// status/meta line, the facts line when asked for and any fact is set, and
+// a rule.
+func (m BoardModel) detailHead(t task.Task, width int, facts bool) []string {
 	title := strings.Join(strings.Fields(t.Title), " ")
-	return []string{
+	head := []string{
 		lipgloss.NewStyle().Width(width).Bold(true).Foreground(ColText).Render(title),
 		lipgloss.NewStyle().MaxWidth(width).Render(detailMetaLine(t, m.now())),
-		MutedStyle.Render(strings.Repeat("─", width)),
 	}
-}
-
-// detailProps are the fixed sections: Deadline and Worktree (side by side
-// when both are set, as in the form), then Parent.
-func (m BoardModel) detailProps(t task.Task, width int) []string {
-	var sections []string
-	due := Countdown(t, m.now(), m.board.DoneStatus())
-	date := ""
-	if t.Deadline != nil {
-		date = indent(FormatDate(t.Deadline.In(m.now().Location())))
+	if facts {
+		head = append(head, joinWrap(m.detailFacts(t), "   ", width)...)
 	}
-	switch {
-	case t.Deadline != nil && t.Worktree != "":
-		dlW, wtW := formDateWidths(width)
-		sections = append(sections, lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(dlW).Render(detailLabel("Deadline", due, dlW)+"\n"+date),
-			"  ",
-			lipgloss.NewStyle().Width(wtW).Render(detailLabel("Worktree", "", wtW)+"\n"+indent(truncate(t.Worktree, wtW-2)))))
-	case t.Deadline != nil:
-		sections = append(sections, detailLabel("Deadline", due, width)+"\n"+date)
-	case t.Worktree != "":
-		sections = append(sections, detailLabel("Worktree", "", width)+"\n"+indent(truncate(t.Worktree, width-2)))
-	}
-	if t.ParentID != "" {
-		if parent, ok := m.board.TaskByID(t.ParentID); ok {
-			id := MutedStyle.Render("  " + shortTaskID(parent.ID))
-			sections = append(sections, detailLabel("Parent", statusWord(parent.Status), width)+"\n"+
-				indent(truncate(parent.Title, max(width-2-lipgloss.Width(id), 1))+id))
-		} else {
-			sections = append(sections, detailLabel("Parent", "missing", width)+"\n"+indent(MutedStyle.Render(shortTaskID(t.ParentID))))
-		}
-	}
-	if agent := m.agentProps(t, width); len(agent) > 0 {
-		sections = append(sections, strings.Join(agent, "\n"))
-	}
-	var rows []string
-	for i, sec := range sections {
-		if i > 0 {
-			rows = append(rows, "")
-		}
-		rows = append(rows, strings.Split(sec, "\n")...)
-	}
-	return rows
+	return append(head, MutedStyle.Render(strings.Repeat("─", width)))
 }
 
 // detailFoot is the popup's hint footer, led by any error. A non-empty
@@ -779,43 +736,83 @@ func matchCount(n int) string {
 	return fmt.Sprintf("%d matches", n)
 }
 
-// detailBodyLines is the scrollable part: the Description, then the
-// Subtasks checklist, then Attachments and Working notes, each under a
-// form-style label. Empty when there is none of them.
+// detailBodyLines is the scrollable part, each section under a form-style
+// label with one blank row between them: Description, Subtasks, Blocked by,
+// Parent, Worktree, Attachments, Working notes, then Agent. Only set
+// sections appear; empty when there is none.
 func (m BoardModel) detailBodyLines(t task.Task, w int) []string {
-	var rows []string
-	if t.Description != "" {
-		rows = append(rows, detailLabel("Description", "", w))
-		for _, line := range strings.Split(renderMarkdown(t.Description, w-2), "\n") {
-			rows = append(rows, indent(line))
-		}
-	}
-	if children := m.board.Children(t.ID); len(children) > 0 {
-		if len(rows) > 0 {
-			rows = append(rows, "")
-		}
-		done, total := m.board.ChildProgress(t.ID)
-		rows = append(rows, detailLabel("Subtasks", fmt.Sprintf("%d of %d complete", done, total), w))
-		for _, child := range children {
-			rows = append(rows, indent(m.childDetailLine(child, w-2)))
-		}
-	}
-	for _, section := range []struct {
-		label string
-		paths []string
-	}{{"Attachments", t.Attachments}, {"Working notes", t.WorkingNotes}} {
-		if len(section.paths) == 0 {
-			continue
-		}
-		if len(rows) > 0 {
-			rows = append(rows, "")
-		}
-		rows = append(rows, detailLabel(section.label, "", w))
-		for _, path := range section.paths {
-			for _, line := range strings.Split(lipgloss.NewStyle().Width(max(w-2, 1)).Render(path), "\n") {
+	var sections [][]string
+	add := func(rows ...string) { sections = append(sections, rows) }
+	paths := func(label string, ps ...string) {
+		rows := []string{detailLabel(label, "", w)}
+		for _, p := range ps {
+			for _, line := range wrapPath(p, w-2) {
 				rows = append(rows, indent(line))
 			}
 		}
+		add(rows...)
+	}
+
+	if t.Description != "" {
+		rows := []string{detailLabel("Description", "", w)}
+		for _, line := range strings.Split(renderMarkdown(t.Description, w-2), "\n") {
+			rows = append(rows, indent(line))
+		}
+		add(rows...)
+	}
+	if children := m.board.Children(t.ID); len(children) > 0 {
+		done, total := m.board.ChildProgress(t.ID)
+		rows := []string{detailLabel("Subtasks", fmt.Sprintf("%d of %d complete", done, total), w)}
+		for _, child := range children {
+			rows = append(rows, indent(m.childDetailLine(child, w-2)))
+		}
+		add(rows...)
+	}
+	if len(t.BlockedBy) > 0 {
+		done := 0
+		for _, id := range t.BlockedBy {
+			if b, ok := m.board.TaskByID(id); ok && b.Status == m.board.DoneStatus() {
+				done++
+			}
+		}
+		rows := []string{detailLabel("Blocked by", fmt.Sprintf("%d of %d done", done, len(t.BlockedBy)), w)}
+		for _, id := range t.BlockedBy {
+			rows = append(rows, indent(m.blockerLine(id, w-2)))
+		}
+		add(rows...)
+	}
+	if t.ParentID != "" {
+		if parent, ok := m.board.TaskByID(t.ParentID); ok {
+			id := MutedStyle.Render("  " + shortTaskID(parent.ID))
+			add(detailLabel("Parent", statusWord(parent.Status), w),
+				indent(truncate(parent.Title, max(w-2-lipgloss.Width(id), 1))+id))
+		} else {
+			add(detailLabel("Parent", "missing", w), indent(MutedStyle.Render(shortTaskID(t.ParentID))))
+		}
+	}
+	if t.Worktree != "" {
+		paths("Worktree", t.Worktree)
+	}
+	if len(t.Attachments) > 0 {
+		paths("Attachments", t.Attachments...)
+	}
+	if len(t.WorkingNotes) > 0 {
+		paths("Working notes", t.WorkingNotes...)
+	}
+	if agent := m.agentRows(t, w-2); len(agent) > 0 {
+		rows := []string{detailLabel("Agent", "", w)}
+		for _, line := range agent {
+			rows = append(rows, indent(line))
+		}
+		add(rows...)
+	}
+
+	var rows []string
+	for i, sec := range sections {
+		if i > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, sec...)
 	}
 	return rows
 }

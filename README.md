@@ -23,7 +23,7 @@ Four columns. Two-line cards. A countdown on each card that gets louder as the d
 ╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮╭──────────────────────╮
 │ TODO (3)             ││ DOING (1)            ││ BLOCKED (1)          ││ DONE (1)             │
 │                      ││                      ││                      ││                      │
-│ ▌ !!! Ship the Q… 6d ││   Rewri… ◆ claude 2d ││   Waiting on de… 12d ││   Drop the old API   │
+│ ▌ ● Ship the QBR… 6d ││   Rewri… ◆ claude 2d ││   Waiting on de… 12d ││   Drop the old API   │
 │ ▌ Draft, review, se… ││   Split the lexer o… ││   Mocks not landed   ││                      │
 │                      ││                      ││                      ││                      │
 │   Renew the TLS … 1d ││                      ││                      ││                      │
@@ -40,8 +40,9 @@ enter Open  a Add  e Edit  d Delete  u Undo  / Search  m Grab  f Family  ctrl+t 
 tab Switch  ? Help  q Quit
 ```
 
-A card can carry a priority marker before its title (`!!!` high in red, `!!`
-medium in amber, `!` low, muted) and, next to the countdown, `◆ claude` while
+A card can carry a priority dot before its title (`●` red for high, amber for
+medium, blue for low; with `NO_COLOR` or a plain terminal it reads `H`, `M` or
+`L` instead) and, next to the countdown, `◆ claude` while
 an agent holds a claim on it. In a narrow column the claim shortens to `◆ cl…`
 and then a bare `◆`; cards never get taller. A column with a WIP limit shows it
 in the header: `IN DEV (4/3)`, with the count in red once it is over.
@@ -243,13 +244,15 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
 | `?` | key list |
 | `q` | quit |
 
-`enter` on a card opens it centred on the screen: the full title, its
-parent, deadline, worktree and ID, then whichever of priority, labels,
-blocked by (up to three, then `+N more`), claim (`until 30/07/2026 15:30`, or
-`expired`), PR, last agent, loop run (`Loop  indev · claude · running 12m`, or
-`indev · done 26/11 13:11`) and `awaiting approval` (or `ready to verify`) are
-set, then the description, the subtask checklist, attachments and working
-notes. The body
+`enter` on a card opens it centred on the screen. The top stays put: the
+full title, the status line (column, ID, ages, moves), then one facts line with
+whichever of priority (`● high` in its colour), deadline (`due 30/11/2026 · 3d`
+in its countdown colour), labels and `awaiting approval` (or `ready to verify`)
+are set. Below it, in this order and only when set: the description, the
+subtask checklist, blocked by, the parent, the worktree, attachments, working
+notes, and an Agent section with the loop run (`Loop  indev · claude · running
+12m`, or `indev · done 26/11 13:11`), the claim (`until 30/07/2026 15:30`, or
+`expired`), the PR and the last agent. Long paths wrap at `/`. The body
 reserves at least ten rows when space permits; long bodies scroll with
 `j`/`k`. It is read-only, but `s`, `e` and `d` work from there.
 

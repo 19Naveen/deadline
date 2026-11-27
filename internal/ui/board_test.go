@@ -1157,8 +1157,8 @@ func TestDetailShowsSubtasksAndParentBreadcrumb(t *testing.T) {
 	}
 	if parentIdx := strings.Index(childView, "  Parent  "+shortTaskID(parent)); parentIdx < 0 {
 		t.Fatalf("child detail has no PARENT section:\n%s", childView)
-	} else if descIdx := strings.Index(childView, "child detail"); descIdx < parentIdx {
-		t.Errorf("parent section must come before the child description:\n%s", childView)
+	} else if descIdx := strings.Index(childView, "child detail"); descIdx > parentIdx {
+		t.Errorf("the child description must come before its parent section:\n%s", childView)
 	}
 	_ = child
 }
@@ -1755,8 +1755,8 @@ func withDeadline(day time.Time) *task.Board {
 	return b
 }
 
-// The detail shows the date under a Deadline label with the countdown as its
-// hint; the month grid lives on the Calendar page, not here.
+// The detail's facts line shows the date and countdown as "due DD/MM/YYYY ·
+// 12d"; the month grid lives on the Calendar page, not here.
 func TestDetailPopupShowsDeadlineWithoutCalendar(t *testing.T) {
 	// UTC midnight to match the UTC test clock; local midnight could show the
 	// neighbouring day.
@@ -1766,7 +1766,7 @@ func TestDetailPopupShowsDeadlineWithoutCalendar(t *testing.T) {
 	out := stripANSI(press(m, "enter").View())
 
 	countdown := stripANSI(Countdown(m.board.Tasks[0], ref, m.board.DoneStatus()))
-	for _, want := range []string{"Deadline", countdown, "  12/08/2026"} {
+	for _, want := range []string{"due 12/08/2026 · " + countdown} {
 		if !strings.Contains(out, want) {
 			t.Errorf("detail popup is missing %q:\n%s", want, out)
 		}
