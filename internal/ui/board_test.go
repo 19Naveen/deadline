@@ -2037,3 +2037,41 @@ func TestSelectedFamilyIsMarkedAcrossColumns(t *testing.T) {
 
 // scrollCounter matches the detail popup's "1–N / M" scroll position.
 var scrollCounter = regexp.MustCompile(`1–\d+ / \d+`)
+
+// A parent card's progress row shortens to fit and never wraps onto a row
+// of its own, at any board width.
+func TestParentProgressRowNeverWraps(t *testing.T) {
+	b := &task.Board{}
+	b.SetColumns(task.DevColumns)
+	p := b.Add("billing-ode: vision-LLM invoice extraction API", "Goal: stateless FastAPI service", nil, ref).ID
+	for i := 0; i < 4; i++ {
+		if _, err := b.AddChild(p, fmt.Sprintf("child %d", i), "", nil, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.SetWorktree(p, "/home/u/billing-ode", ref)
+	if err := b.Move(p, task.StatusInDev, ref); err != nil {
+		t.Fatal(err)
+	}
+	m := fixedClock(NewBoardModel(b))
+	for w := 100; w <= 200; w += 5 {
+		m.SetSize(w, 30)
+		out := stripANSI(m.View())
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "│ subtasks") || strings.Contains(line, "│ subtasks ") {
+				t.Fatalf("width %d: progress row wrapped:\n%s", w, out)
+			}
+		}
+		if !strings.Contains(out, "0/4") && !strings.Contains(out, "0 of 4") {
+			t.Errorf("width %d: progress count missing:\n%s", w, out)
+		}
+	}
+	for _, c := range []struct {
+		w    int
+		want string
+	}{{40, " 0 of 4 subtasks"}, {17, " 0/4 subtasks"}, {10, " 0/4"}} {
+		if got := stripANSI(progressLine(0, 4, c.w)); !strings.HasSuffix(got, c.want) || lipgloss.Width(got) > c.w {
+			t.Errorf("progressLine(width %d) = %q, want suffix %q within width", c.w, got, c.want)
+		}
+	}
+}

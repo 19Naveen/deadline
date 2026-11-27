@@ -507,13 +507,20 @@ func (m BoardModel) renderCard(colIdx, itemIdx int, t task.Task, width int) stri
 			lines = append(lines, MutedStyle.Render(truncate("↳ "+parent.Title, inner)))
 		}
 	} else if done, total := m.board.ChildProgress(t.ID); total > 0 {
-		lines = append(lines, progressBar(done, total)+MutedStyle.Render(fmt.Sprintf(" %d of %d subtasks", done, total)))
+		lines = append(lines, progressLine(done, total, inner))
 	}
 	if t.Description != "" {
 		lines = append(lines, descLine(t.Description, inner))
 	}
 	if t.Worktree != "" {
 		lines = append(lines, MutedStyle.Render(truncate("⎇ "+filepath.Base(t.Worktree), inner)))
+	}
+	// Every card line is one terminal row: a line that wrapped would spill
+	// outside the card's left bar and shift every card below it.
+	for i, l := range lines {
+		if lipgloss.Width(l) > inner {
+			lines[i] = lipgloss.NewStyle().MaxWidth(inner).Render(l)
+		}
 	}
 	body := strings.Join(lines, "\n")
 
@@ -541,6 +548,22 @@ func (m BoardModel) inSelectedFamily(t task.Task) bool {
 	}
 	root := m.board.FamilyRootID(sel)
 	return m.board.FamilyRootID(t) == root && (t.ParentID != "" || sel.ParentID != "")
+}
+
+// progressLine is the parent card's subtask row, shortened to fit width:
+// "▰▱▱ 1 of 3 subtasks", then "1/3 subtasks", then "1/3", then the bar.
+func progressLine(done, total, width int) string {
+	bar := progressBar(done, total)
+	for _, text := range []string{
+		fmt.Sprintf(" %d of %d subtasks", done, total),
+		fmt.Sprintf(" %d/%d subtasks", done, total),
+		fmt.Sprintf(" %d/%d", done, total),
+	} {
+		if lipgloss.Width(bar)+lipgloss.Width(text) <= width {
+			return bar + MutedStyle.Render(text)
+		}
+	}
+	return bar
 }
 
 // progressBar draws subtask completion: one cell per subtask up to five,
