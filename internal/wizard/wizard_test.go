@@ -784,7 +784,7 @@ func TestWelcomeExplainsGotodo(t *testing.T) {
 		if got := lipgloss.Height(v); got > sz[1] {
 			t.Errorf("%dx%d: welcome is %d rows", sz[0], sz[1], got)
 		}
-		for _, want := range []string{"kanban board in your terminal", "TODO", "SHIPPED", "This setup will"} {
+		for _, want := range []string{"kanban board in your terminal", "todo  →  in dev  →  review  →  shipped", "This setup will"} {
 			if !strings.Contains(v, want) && !strings.Contains(strings.ToUpper(v), strings.ToUpper(want)) {
 				t.Errorf("%dx%d: welcome lacks %q:\n%s", sz[0], sz[1], want, v)
 			}
@@ -793,8 +793,8 @@ func TestWelcomeExplainsGotodo(t *testing.T) {
 		if sz[1] >= 24 && !hasLogo {
 			t.Errorf("%dx%d: welcome should show the gotodo wordmark:\n%s", sz[0], sz[1], v)
 		}
-		if sz[1] >= 24 && !strings.Contains(v, "builds it") {
-			t.Errorf("%dx%d: welcome should show who moves the card:\n%s", sz[0], sz[1], v)
+		if !strings.Contains(v, "agent") || strings.Contains(v, "┌──") {
+			t.Errorf("%dx%d: welcome should show who moves the card, without boxes:\n%s", sz[0], sz[1], v)
 		}
 	}
 }

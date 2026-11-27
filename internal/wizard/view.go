@@ -231,50 +231,40 @@ var logo = []string{
 }
 
 // welcomeView explains what gotodo is before asking anything, then what
-// setup will do. It sheds the logo and the boxed diagram on short
-// terminals so the essentials always fit in room rows.
+// setup will do. The logo and footnote drop first on short terminals.
 func (m Model) welcomeView(w, room int) (string, string, []string) {
 	sub := "A kanban board in your terminal that you and your coding agents share."
 
-	// How a card travels: each column in its board colour, then who moves it.
-	cols := []struct {
-		name string
-		st   lipgloss.Style
-	}{{"TODO", textStyle}, {"IN DEV", amberStyle}, {"REVIEW", accentStyle}, {"SHIPPED", okStyle}}
-	boxed := make([]string, 3)
-	for i, c := range cols {
-		bar := strings.Repeat("─", len(c.name)+2)
-		sep := "    "
-		mid := mutedStyle.Render(" ─▶ ")
-		if i == 0 {
-			sep, mid = "  ", "  "
+	// The card flow, minimal: each column in its board colour, and who
+	// moves the card there underneath.
+	steps := []struct {
+		col, who string
+		st       lipgloss.Style
+	}{{"todo", "you", textStyle}, {"in dev", "agent", amberStyle}, {"review", "agent", accentStyle}, {"shipped", "you", okStyle}}
+	flow, whom := "  ", "  "
+	for i, s := range steps {
+		cell := len(s.col) + 5 // " ─▶  " between columns
+		if i == len(steps)-1 {
+			cell = len(s.col)
 		}
-		boxed[0] += sep + c.st.Render("┌"+bar+"┐")
-		boxed[1] += mid + c.st.Render("│ "+c.name+" │")
-		boxed[2] += sep + c.st.Render("└"+bar+"┘")
+		flow += s.st.Render(s.col)
+		if i < len(steps)-1 {
+			flow += mutedStyle.Render("  →  ")
+		}
+		whom += mutedStyle.Render(pad(s.who, cell))
 	}
-	captions := "   you add     an agent      an agent      you verify\n" +
-		"   a card      builds it     checks it     and ship"
-	flat := "  TODO ─▶ IN DEV ─▶ REVIEW ─▶ SHIPPED   you add · agents build and check · you ship"
 
 	var agents []string
 	for _, a := range loops.Agents {
 		if _, ok := m.paths[a]; ok {
-			agents = append(agents, okStyle.Render("✓ ")+boldStyle.Render(a))
+			agents = append(agents, okStyle.Render("✓ ")+textStyle.Render(a))
 		} else {
-			agents = append(agents, mutedStyle.Render("✗ "+a))
+			agents = append(agents, mutedStyle.Render("· "+a))
 		}
 	}
 	num := func(n, s string) string { return "  " + accentStyle.Render(n) + "  " + textStyle.Render(s) }
-	setup := []string{
-		section("This setup will"),
-		num("1", "Connect gotodo to your agents, so they can read and move cards"),
-		num("2", "Optionally start an agent when a card enters a column (loops)"),
-		num("3", "Optionally install recommended skills for those agents"),
-	}
-	foot := mutedStyle.Render("Nothing changes until you confirm on the Summary step.")
 
-	build := func(withLogo, withBoxes, withFoot bool) (string, []string) {
+	build := func(withLogo, withFoot bool) (string, []string) {
 		title := titleStyle.Render("Welcome to gotodo")
 		if withLogo {
 			var l []string
@@ -283,41 +273,25 @@ func (m Model) welcomeView(w, room int) (string, string, []string) {
 			}
 			title = strings.Join(l, "\n")
 		}
-		b := []string{section("How it works")}
-		if withBoxes {
-			b = append(b, boxed...)
-			for _, r := range strings.Split(captions, "\n") {
-				b = append(b, mutedStyle.Render(r))
-			}
-		} else {
-			b = append(b, textStyle.Render(trunc(flat, w)))
+		b := []string{flow, whom, "",
+			"  " + mutedStyle.Render("agents  ") + strings.Join(agents, "  "), "",
+			section("This setup will"),
+			num("1", "Connect gotodo to your agents, so they can read and move cards"),
+			num("2", "Optionally start an agent when a card enters a column (loops)"),
+			num("3", "Optionally install recommended skills for those agents"),
 		}
-		b = append(b, "", "  "+mutedStyle.Render("Agents found  ")+strings.Join(agents, "   "), "")
-		b = append(b, setup...)
 		if withFoot {
-			b = append(b, "", foot)
+			b = append(b, "", mutedStyle.Render("Nothing changes until you confirm on the Summary step."))
 		}
 		return title, b
 	}
-	// Rows a variant needs: title lines + subtitle + spacer + body.
-	fits := func(title string, b []string) bool {
-		return len(strings.Split(title, "\n"))+2+len(b) <= room
-	}
-	wide := w >= 56
-	// Richest first: the logo is worth more than the footnote, the boxed
-	// diagram more than the logo.
-	for _, v := range [][3]bool{
-		{true, true, true}, {true, true, false}, {false, true, true},
-		{false, true, false}, {true, false, false}, {false, false, false},
-	} {
-		if v[1] && !wide {
-			continue
-		}
-		if title, b := build(v[0], v[1], v[2]); fits(title, b) {
+	for _, v := range [][2]bool{{true, true}, {true, false}, {false, true}, {false, false}} {
+		title, b := build(v[0], v[1])
+		if len(strings.Split(title, "\n"))+2+len(b) <= room {
 			return title, sub, b
 		}
 	}
-	title, b := build(false, false, false)
+	title, b := build(false, false)
 	return title, sub, b
 }
 
